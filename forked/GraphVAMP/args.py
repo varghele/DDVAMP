@@ -40,3 +40,4 @@ def buildParser():
 	parser.add_argument('--return-emb', action='store_true', default=False, help='Whether return the learned graph embeddings')
 	parser.add_argument('--return-attn', action='store_true', default=False, help='Whether to return the attention probs (only for NeighborMultiHeadAttention)')
 	return parser
+
