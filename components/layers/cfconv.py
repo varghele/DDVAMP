@@ -43,9 +43,8 @@ class CFConv(nn.Module):
     def __init__(self, n_gaussians, n_filters, cutoff=5.0, activation=nn.Tanh(), use_attention=True):
         super().__init__()
 
-        # Create filter generator using the improved LinearLayer
+        # Create filter generator using LinearLayer
         filter_layers = (
-            # First layer with activation
             LinearLayer.create(
                 d_in=n_gaussians,
                 d_out=n_filters,
@@ -53,7 +52,6 @@ class CFConv(nn.Module):
                 activation=activation,
                 weight_init='xavier'
             ) +
-            # Second layer without activation
             LinearLayer.create(
                 d_in=n_filters,
                 d_out=n_filters,
@@ -63,6 +61,7 @@ class CFConv(nn.Module):
         )
         self.filter_generator = nn.Sequential(*filter_layers)
 
+        # Initialize attention components
         self.use_attention = use_attention
         if use_attention:
             self.nbr_filter = nn.Parameter(torch.Tensor(n_filters, 1))
@@ -92,12 +91,19 @@ class CFConv(nn.Module):
             - nbr_filter : torch.Tensor or None
                 Attention weights if use_attention=True, None otherwise
         """
+        # Ensure all inputs are on the same device
+        device = features.device
+        rbf_expansion = rbf_expansion.to(device)
+        neighbor_list = neighbor_list.to(device)
+
         batch_size, n_atoms, n_neighbors = neighbor_list.size()
 
         # Generate continuous filters from RBF expansion
         conv_filter = self.filter_generator(rbf_expansion)
+        conv_filter = conv_filter.to(device)
 
-        # Reshape and expand neighbor list for gathering features
+        # Ensure neighbor_list is int64 and properly shaped for gathering
+        neighbor_list = neighbor_list.to(torch.int64)
         neighbor_list = neighbor_list.reshape(-1, n_atoms * n_neighbors, 1)
         neighbor_list = neighbor_list.expand(-1, -1, features.size(2))
 
@@ -110,17 +116,14 @@ class CFConv(nn.Module):
 
         # Aggregate features using either attention or summation
         if self.use_attention:
+            # Move nbr_filter to correct device
+            nbr_filter = self.nbr_filter.to(device)
             # Compute attention weights and apply them
-            nbr_filter = torch.matmul(conv_features, self.nbr_filter).squeeze(-1)
-            nbr_filter = F.softmax(nbr_filter, dim=-1)
-            aggregated_features = torch.einsum('bij,bijc->bic', nbr_filter, conv_features)
+            attention_weights = torch.matmul(conv_features, nbr_filter).squeeze(-1)
+            attention_weights = F.softmax(attention_weights, dim=-1)
+            aggregated_features = torch.einsum('bij,bijc->bic', attention_weights, conv_features)
+            return aggregated_features, attention_weights
         else:
-            nbr_filter = None
+            # Simple summation aggregation
             aggregated_features = conv_features.sum(dim=2)
-
-        return aggregated_features, nbr_filter
-
-
-
-
-
+            return aggregated_features, None

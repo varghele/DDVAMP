@@ -1,117 +1,146 @@
 import torch
 import torch.nn as nn
-import torch_geometric as pyg
-from torch_geometric.nn import GATConv
-import time
-import numpy as np
-from models.layers import GATLayer
+import pytest
+from components.layers.gat import PyGGAT
+from forked.RevGraphVAMP.layers import GATLayer
 
 
+def test_gat_implementations():
+    """Compare custom GATLayer with PyG's GATConv wrapper implementation."""
 
-# Your custom GAT implementation
-class CustomGAT(nn.Module):
-    def __init__(self, c_in, c_out, num_heads=1, concat_heads=True, alpha=0.2):
-        super().__init__()
-        self.gat = GATLayer(c_in, c_out, num_heads, concat_heads, alpha)
+    # Set random seed for reproducibility
+    torch.manual_seed(42)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    def forward(self, x, adj_matrix):
-        return self.gat(x, adj_matrix)[0]  # Only return node features, not attention
-
-
-# PyG GAT implementation wrapper
-class PyGGAT(nn.Module):
-    def __init__(self, c_in, c_out, num_heads=1, concat_heads=True, alpha=0.2):
-        super().__init__()
-        out_channels = c_out // num_heads if concat_heads else c_out
-        self.gat = GATConv(c_in, out_channels,
-                           heads=num_heads,
-                           concat=concat_heads,
-                           negative_slope=alpha,
-                           add_self_loops=True)  # Match custom implementation
-
-        # Reset parameters to match custom initialization
-        with torch.no_grad():
-            nn.init.xavier_uniform_(self.gat.lin.weight, gain=1.414)
-
-    def forward(self, x, edge_index):
-        # Add normalization to match custom implementation
-        out = self.gat(x, edge_index)
-        return out / torch.sqrt(torch.tensor(self.gat.heads))  # Scale output
-
-
-def compare_gat_implementations():
     # Test parameters
-    batch_size = 32
-    num_nodes = 100
-    c_in = 64
-    c_out = 128
+    batch_size = 4
+    num_nodes = 10
+    c_in = 16
+    c_out = 32
     num_heads = 4
 
-    # Generate random input data
-    x = torch.randn(batch_size, num_nodes, c_in)
-    adj_matrix = torch.zeros(batch_size, num_nodes, num_nodes)
+    # Initialize both implementations
+    custom_gat = GATLayer(
+        c_in=c_in,
+        c_out=c_out,
+        num_heads=num_heads,
+        concat_heads=True,
+        alpha=0.2
+    ).to(device)
 
-    # Create random sparse connections (50% density)
-    for b in range(batch_size):
-        random_edges = torch.rand(num_nodes, num_nodes) < 0.5
-        #random_edges = torch.ones(num_nodes, num_nodes)
-        adj_matrix[b] = random_edges
+    pyg_gat = PyGGAT(
+        c_in=c_in,
+        c_out=c_out,
+        num_heads=num_heads,
+        concat_heads=True,
+        alpha=0.2
+    ).to(device)
 
-    # Convert to edge_index format for PyG
-    edge_index = adj_matrix[0].nonzero().t()
+    def print_tensor_stats(name, tensor):
+        """Helper function to print tensor statistics"""
+        print(f"\n{name} statistics:")
+        print(f"Shape: {tensor.shape}")
+        print(f"Mean: {tensor.mean().item():.6f}")
+        print(f"Std: {tensor.std().item():.6f}")
+        print(f"Min: {tensor.min().item():.6f}")
+        print(f"Max: {tensor.max().item():.6f}")
 
-    # Initialize models
-    custom_gat = CustomGAT(c_in, c_out, num_heads)
-    pyg_gat = PyGGAT(c_in, c_out, num_heads)
+    # Create test inputs
+    node_feats = torch.randn(batch_size, num_nodes, c_in).to(device)
 
-    # Timing and memory comparison
-    def measure_performance(model, inputs, name):
-        start_time = time.time()
-        torch.cuda.empty_cache()
-        start_memory = torch.cuda.memory_allocated()
+    # Create adjacency matrix with self-loops
+    adj_matrix = torch.ones(batch_size, num_nodes, num_nodes).to(device)
 
-        if name == "Custom":
-            output = model(inputs[0], inputs[1])
-        else:
-            output = model(inputs[0].reshape(-1, c_in), inputs[1])
-            output = output.reshape(batch_size, num_nodes, -1)
+    # Create edge_index for PyG (from adj_matrix)
+    edge_index = adj_matrix[0].nonzero().t().to(device)
 
-        end_memory = torch.cuda.memory_allocated()
-        end_time = time.time()
+    # Test custom implementation
+    print("\n=== Testing Custom GAT Implementation ===")
+    custom_out, custom_attn = custom_gat(node_feats, adj_matrix, return_attn_probs=True)
+    print_tensor_stats("Custom output", custom_out)
+    print_tensor_stats("Custom attention", custom_attn)
 
-        return {
-            'time': end_time - start_time,
-            'memory': (end_memory - start_memory) / 1024 ** 2,  # MB
-            'output_shape': output.shape,
-            'output_mean': output.mean().item(),
-            'output_std': output.std().item()
-        }
+    # Test PyG implementation
+    print("\n=== Testing PyG GAT Implementation ===")
+    pyg_out = pyg_gat(node_feats[0], edge_index)  # Use first batch for PyG
+    print_tensor_stats("PyG output", pyg_out)
 
-    # Run comparisons
-    custom_inputs = (x, adj_matrix)
-    pyg_inputs = (x, edge_index)
+    # Detailed comparison tests
+    print("\n=== Comparison Tests ===")
 
-    custom_results = measure_performance(custom_gat, custom_inputs, "Custom")
-    pyg_results = measure_performance(pyg_gat, pyg_inputs, "PyG")
+    # 1. Shape tests
+    print("\nShape comparison:")
+    print(f"Custom output: {custom_out.shape}")
+    print(f"PyG output: {pyg_out.shape}")
 
-    # Print results
-    print("=== Performance Comparison ===")
-    print("\nCustom GAT:")
-    print(f"Time: {custom_results['time']:.4f} seconds")
-    print(f"Memory: {custom_results['memory']:.2f} MB")
-    print(f"Output shape: {custom_results['output_shape']}")
-    print(f"Output stats: mean={custom_results['output_mean']:.4f}, std={custom_results['output_std']:.4f}")
+    assert custom_out.shape == (batch_size, num_nodes, c_out), \
+        f"Custom output shape {custom_out.shape} doesn't match expected {(batch_size, num_nodes, c_out)}"
 
-    print("\nPyG GAT:")
-    print(f"Time: {pyg_results['time']:.4f} seconds")
-    print(f"Memory: {pyg_results['memory']:.2f} MB")
-    print(f"Output shape: {pyg_results['output_shape']}")
-    print(f"Output stats: mean={pyg_results['output_mean']:.4f}, std={pyg_results['output_std']:.4f}")
+    assert pyg_out.shape == (num_nodes, c_out), \
+        f"PyG output shape {pyg_out.shape} doesn't match expected {(num_nodes, c_out)}"
+
+    # 2. Value range tests
+    print("\nValue range comparison:")
+    custom_stats = {
+        'mean': custom_out[0].mean().item(),
+        'std': custom_out[0].std().item(),
+        'min': custom_out[0].min().item(),
+        'max': custom_out[0].max().item()
+    }
+
+    pyg_stats = {
+        'mean': pyg_out.mean().item(),
+        'std': pyg_out.std().item(),
+        'min': pyg_out.min().item(),
+        'max': pyg_out.max().item()
+    }
+
+    print("\nCustom implementation statistics:")
+    for k, v in custom_stats.items():
+        print(f"{k}: {v:.6f}")
+
+    print("\nPyG implementation statistics:")
+    for k, v in pyg_stats.items():
+        print(f"{k}: {v:.6f}")
+
+    # 3. Attention tests
+    print("\nAttention weights test:")
+    attention_sum = custom_attn.sum(dim=2)
+    print(f"Attention sum mean: {attention_sum.mean():.6f}")
+    print(f"Attention sum std: {attention_sum.std():.6f}")
+
+    assert torch.allclose(attention_sum,
+                          torch.ones_like(attention_sum),
+                          rtol=1e-5), "Attention weights don't sum to 1"
+
+    # 4. Gradient flow test
+    print("\nGradient flow test:")
+
+    # Test custom implementation gradients
+    custom_loss = custom_out.mean()
+    custom_loss.backward()
+
+    custom_grads = {name: param.grad.abs().mean().item()
+                    for name, param in custom_gat.named_parameters()}
+
+    # Reset gradients and test PyG implementation
+    pyg_gat.zero_grad()
+    pyg_loss = pyg_out.mean()
+    pyg_loss.backward()
+
+    pyg_grads = {name: param.grad.abs().mean().item()
+                 for name, param in pyg_gat.named_parameters()}
+
+    print("\nCustom implementation gradients:")
+    for name, grad in custom_grads.items():
+        print(f"{name}: {grad:.6f}")
+
+    print("\nPyG implementation gradients:")
+    for name, grad in pyg_grads.items():
+        print(f"{name}: {grad:.6f}")
+
+    print("\nAll tests passed successfully!")
 
 
 if __name__ == "__main__":
-    # Set random seed for reproducibility
-    torch.manual_seed(42)
-
-    # Run comparison
-    compare_gat_implementations()
+    pytest.main([__file__])
