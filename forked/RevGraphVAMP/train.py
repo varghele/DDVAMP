@@ -274,7 +274,11 @@ def train(train_loader , n_epochs, validation_loader=None, loader_train_all=None
         # vampnet.vampu.load_state_dict(checkpoint['vlu_dict'])
         # vampnet.vamps.load_state_dict(checkpoint['vls_dict'])
         record_result("pretrain step: %f, vill score %s " % (pre_epoch, early_stopping.val_loss_min), log_pth)
-        vampnet.set_optimizer_lr(0.2)  # reduce learning rate
+        # vampnet.set_optimizer_lr(0.2)  # reduce learning rate
+
+        # With this:
+        for param_group in vampnet.optimizer.param_groups:
+            param_group['lr'] = 0.2
 
 
 
