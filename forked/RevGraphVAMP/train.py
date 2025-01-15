@@ -55,10 +55,11 @@ meta_file = os.path.join(args.save_folder, 'metadata.pkl')
 pickle.dump({'args': args}, open(meta_file, 'wb'))
 
 #------------------- data as a list of trajectories ---------------------------
-file_path = args.data_path
+#file_path = args.data_path
+file_path = 'intermediate/red_5nbrs_1ns_'
 data_info_file = file_path + "datainfo.npy"
-dist_file = file_path + "dist.npy"
-nbr_data_file = file_path + "inds.npy"
+dist_file = file_path + "dist_min.npy"
+nbr_data_file = file_path + "inds_min.npy"
 
 #data_info = np.load("../intermediate/red_5nbrs_1ns_datainfo.npy", allow_pickle=True).item()
 data_info = np.load(args.data_info, allow_pickle=True).item()
@@ -67,7 +68,8 @@ traj_length = data_info['length']
 print(traj_length)
 print(traj_length[0].shape)
 #dists1, inds1 = np.load(args.dist_data)['arr_0'], np.load(args.nbr_data)['arr_0']
-dists1, inds1 = np.load(args.dist_data), np.load(args.nbr_data)
+#dists1, inds1 = np.load(args.dist_data), np.load(args.nbr_data)
+dists1, inds1 = np.load(dist_file), np.load(nbr_data_file)
 print(dists1.shape)
 print(inds1.shape)
 
@@ -127,7 +129,7 @@ vls = VAMPS(args.num_classes, activation=torch.exp, renorm=True)
 
 vampnet = RevVAMPNet(lobe=lobe, lobe_timelagged=lobe_timelagged, learning_rate=args.lr, device=device, optimizer='Adam',
                      score_method=args.score_method, vampu=vlu, vamps=vls)
-
+print("STOPPING POINT")
 def count_parameters(model):
     '''
     count the number of parameters in the model
@@ -136,7 +138,10 @@ def count_parameters(model):
 
 print('number of parameters', count_parameters(lobe))
 
-def train(train_loader , n_epochs, validation_loader=None, loader_train_all=None):
+def train(train_loader ,
+          n_epochs,
+          validation_loader=None,
+          loader_train_all=None):
     '''
     Parameters:
     -----------------

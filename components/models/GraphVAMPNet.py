@@ -7,8 +7,6 @@ from components.layers.gcn_interaction import GCNInteraction
 from components.distances.gaussian import GaussianDistance
 from args.args import buildParser
 
-args = buildParser().parse_args()
-
 
 class GraphVampNet(nn.Module):
     """
@@ -21,98 +19,52 @@ class GraphVampNet(nn.Module):
     - SchNet
     """
 
-    def __init__(
-            self,
-            num_atoms: int = args.num_atoms,
-            num_neighbors: int = args.num_neighbors,
-            n_classes: int = args.num_classes,
-            n_conv: int = args.n_conv,
-            h_a: int = args.h_a,
-            h_g: Optional[int] = args.h_g,
-            dmin: float = args.dmin,
-            dmax: float = args.dmax,
-            step: float = args.step,
-            conv_type: str = 'SchNet',
-            num_heads: int = args.num_heads,
-            residual: bool = args.residual,
-            use_backbone_atoms: bool = args.use_backbone_atoms,
-            attention_pool: bool = args.attention_pool,
-            seq_file: Optional[str] = None,
-            atom_embedding_init: str = 'normal',
-            use_pre_trained: bool = False,
-            pre_trained_weights_file: Optional[str] = None,
-    ):
+    def __init__(self, args=None):
         """
         Initialize GraphVampNet with multiple graph convolution options.
 
         Parameters
         ----------
-        num_atoms : int
-            Number of atoms in the system
-        num_neighbors : int
-            Number of neighbors per atom
-        n_classes : int
-            Number of output classes
-        n_conv : int
-            Number of graph convolution layers
-        h_a : int
-            Hidden dimension for atom features
-        h_g : Optional[int]
-            Hidden dimension for graph features after pooling
-        dmin : float
-            Minimum distance for Gaussian basis
-        dmax : float
-            Maximum distance for Gaussian basis
-        step : float
-            Step size for Gaussian basis
-        conv_type : str
-            Type of graph convolution layer ('SchNet' or 'GATLayer')
-        num_heads : int
-            Number of attention heads for GAT
-        residual : bool
-            Whether to use residual connections
-        use_backbone_atoms : bool
-            Whether to use backbone atoms
-        attention_pool : bool
-            Whether to use attention pooling
-        seq_file : Optional[str]
-            Path to sequence file for embedding initialization
-        atom_embedding_init : str
-            Type of atom embedding initialization
-        use_pre_trained : bool
-            Whether to use pre-trained embeddings
-        pre_trained_weights_file : Optional[str]
-            Path to pre-trained weights file
+        args : argparse.Namespace, optional
+            Namespace containing model parameters. If None, default parameters will be used.
         """
-        super(GraphVampNet).__init__()
+        super(GraphVampNet, self).__init__()  # Fixed super() call
 
-        # Store parameters
-        self.num_atoms = num_atoms
-        self.num_neighbors = num_neighbors
-        self.n_classes = n_classes
-        self.n_conv = n_conv
-        self.h_a = h_a
-        self.h_g = h_g
-        self.residual = residual
-        self.use_backbone_atoms = use_backbone_atoms
-        self.attention_pool = attention_pool
-        self.conv_type = conv_type
-        self.num_heads = num_heads
+        # Initialize args if not provided
+        if args is None:
+            parser = buildParser()
+            args = parser.parse_args([])
+
+        # Store parameters from args
+        self.num_atoms = getattr(args, 'num_atoms', 100)  # Add default values
+        self.num_neighbors = getattr(args, 'num_neighbors', 5)
+        self.n_classes = getattr(args, 'num_classes', 5)
+        self.n_conv = getattr(args, 'n_conv', 3)
+        self.h_a = getattr(args, 'h_a', 64)
+        self.h_g = getattr(args, 'h_g', 32)
+        self.residual = getattr(args, 'residual', True)
+        self.use_backbone_atoms = getattr(args, 'use_backbone_atoms', False)
+        self.attention_pool = getattr(args, 'attention_pool', True)
+        self.conv_type = getattr(args, 'conv_type', 'SchNet')
+        self.num_heads = getattr(args, 'num_heads', 4)
+        self.dmin = getattr(args, 'dmin', 0.0)
+        self.dmax = getattr(args, 'dmax', 10.0)
+        self.step = getattr(args, 'step', 0.1)
 
         # Initialize Gaussian distance basis
-        self.gauss = GaussianDistance(dmin, dmax, step)
+        self.gauss = GaussianDistance(self.dmin, self.dmax, self.step)
         self.h_b = self.gauss.num_features
 
-        # Initialize atom embeddings
-        if use_pre_trained and pre_trained_weights_file:
-            self._init_pretrained_embeddings(pre_trained_weights_file)
-        elif seq_file:
-            self._init_sequence_embeddings(seq_file)
+        # Initialize embeddings based on configuration
+        if getattr(args, 'use_pre_trained', False) and hasattr(args, 'pre_trained_weights_file'):
+            self._init_pretrained_embeddings(args.pre_trained_weights_file)
+        elif hasattr(args, 'seq_file') and args.seq_file:
+            self._init_sequence_embeddings(args.seq_file)
         else:
-            self._init_random_embeddings(atom_embedding_init)
+            self._init_random_embeddings('normal')  # Default to 'normal' initialization
 
         # Initialize convolution layers based on type
-        if conv_type == 'SchNet':
+        if self.conv_type == 'SchNet':
             self.convs = nn.ModuleList([
                 GCNInteraction(
                     n_inputs=self.h_a,
@@ -122,7 +74,7 @@ class GraphVampNet(nn.Module):
                     use_attention=True
                 ) for _ in range(self.n_conv)
             ])
-        elif conv_type == 'GATLayer':
+        elif self.conv_type == 'GATLayer':
             self.convs = nn.ModuleList([
                 PyGGAT(
                     c_in=self.h_a,
@@ -133,17 +85,17 @@ class GraphVampNet(nn.Module):
                 ) for _ in range(self.n_conv)
             ])
         else:
-            raise ValueError(f"Unsupported convolution type: {conv_type}")
+            raise ValueError(f"Unsupported convolution type: {self.conv_type}")
 
         # Initialize output layers
         if self.h_g is not None:
             self.amino_emb = nn.Linear(self.h_a, self.h_g)
-            self.fc_classes = nn.Linear(self.h_g, n_classes)
+            self.fc_classes = nn.Linear(self.h_g, self.n_classes)
         else:
-            self.fc_classes = nn.Linear(self.h_a, n_classes)
+            self.fc_classes = nn.Linear(self.h_a, self.n_classes)
 
         # Initialize pooling attention if needed
-        if attention_pool:
+        if self.attention_pool:
             self.attn_pool = PyGGAT(
                 c_in=self.h_a,
                 c_out=self.h_a,

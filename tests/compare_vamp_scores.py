@@ -81,8 +81,6 @@ def generate_test_data(batch_size: int, dim: int) -> Tuple[torch.Tensor, torch.T
 
 def test_vamp_scores():
     """Test both VAMP score implementations."""
-
-    # Test parameters
     test_cases = [
         {'batch_size': 10, 'dim': 5},
         {'batch_size': 100, 'dim': 20},
@@ -102,22 +100,9 @@ def test_vamp_scores():
             for mode in modes:
                 for eps in epsilons:
                     try:
-                        # Compute scores with both implementations
-                        score_old = vamp_score_old(
-                            data, data_lagged,
-                            method=method,
-                            epsilon=eps,
-                            mode=mode
-                        )
+                        score_old = vamp_score_old(data, data_lagged, method=method, epsilon=eps, mode=mode)
+                        score_new = vamp_score_new(data, data_lagged, method=method, epsilon=eps, mode=mode)
 
-                        score_new = vamp_score_new(
-                            data, data_lagged,
-                            method=method,
-                            epsilon=eps,
-                            mode=mode
-                        )
-
-                        # Compare results
                         if torch.is_tensor(score_old) and torch.is_tensor(score_new):
                             is_close = torch.allclose(score_old, score_new, rtol=1e-5)
                         else:

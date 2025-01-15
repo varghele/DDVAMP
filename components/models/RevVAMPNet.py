@@ -6,16 +6,17 @@ from deeptime.decomposition.deep import VAMPNet
 from deeptime.util.torch import disable_TF32, multi_dot
 from tqdm import tqdm
 from args.args import buildParser
+from components.losses.vampnet_loss import vampnet_loss
 
+# Device configuration
 if torch.cuda.is_available():
-	device = torch.device('cuda')
-	print('cuda is is available')
+    device = torch.device('cuda')
+    print('cuda is available')
 else:
-	print('Using CPU')
-	device = torch.device('cpu')
+    print('Using CPU')
+    device = torch.device('cpu')
 
 LAG_EPOCH = 1000
-args = buildParser().parse_args()
 
 class RevVAMPNet(VAMPNet):
     """
@@ -61,13 +62,30 @@ class RevVAMPNet(VAMPNet):
                  score_mode: str = 'regularize',
                  epsilon: float = 1e-6,
                  dtype: np.dtype = np.float32,
-                 n_output: int = args.num_classes):
+                 n_output: Optional[int] = None,
+                 args=None):
+
+        # Initialize parser for default values if args not provided
+        if args is None:
+            parser = buildParser()
+            args = parser.parse_args([])
+
+        # Store args for later use
+        self.args = args
+
+        # Set up valid score methods (to extend the deeptime vampnet)
+        self.valid_score_methods = ('VAMP1', 'VAMP2', 'VAMPE', 'VAMPCE')
+
+        # Initialize step counter
+        self._step = 0
 
         super().__init__(lobe, lobe_timelagged, device, optimizer, learning_rate,
                          score_method, score_mode, epsilon, dtype)
 
+        # Use provided n_output or fall back to args.num_classes
+        self.n_output = n_output if n_output is not None else args.num_classes
+
         # Initialize additional attributes
-        self.n_output = n_output
         self._vampu = vampu
         self._vamps = vamps
         self._k_cache = {}
@@ -76,19 +94,44 @@ class RevVAMPNet(VAMPNet):
         self._K = None
         self.data = None
 
+        # Initialize optimizer
+        #if isinstance(optimizer, str):
+        #    optimizer = getattr(torch.optim, optimizer)
+
+        # Collect all parameters
+        #all_params = list(self.lobe.parameters())
+        #if self.lobe_timelagged is not None:
+        #    all_params.extend(list(self.lobe_timelagged.parameters()))
+        #if self._vampu is not None:
+        #    all_params.extend(list(self._vampu.parameters()))
+        #if self._vamps is not None:
+        #    all_params.extend(list(self._vamps.parameters()))
+
+        # Create optimizer
+        # self.optimizer = optimizer(all_params, lr=learning_rate)
+
         # Validate VAMPCE configuration
         if score_method == 'VAMPCE':
-            if vampu is None or vamps is None:
-                raise ValueError("vampu and vamps modules must be defined for VAMPCE score method")
+            assert vampu is not None and vamps is not None, f"vampu and vamps module must be defined "
+            self.setup_optimizer(optimizer, list(self.lobe.parameters()) + list(self.lobe_timelagged.parameters()) +
+                                 list(self._vampu.parameters()) + list(self._vamps.parameters()))
 
-            # Setup optimizer with all parameters
-            all_params = (
-                    list(self.lobe.parameters()) +
-                    list(self.lobe_timelagged.parameters()) +
-                    list(self._vampu.parameters()) +
-                    list(self._vamps.parameters())
+    def score_method(self, value: str) -> None:
+        """
+        Set the scoring method if it's valid. (this has to be done to extend the deeptime vampnet)
+
+        Args:
+            value (str): The scoring method to be set
+
+        Raises:
+            AssertionError: If the provided value is not in valid_score_methods
+        """
+        if value not in self.valid_score_methods:
+            raise ValueError(
+                f"Invalid scoring method '{value}'. "
+                f"Available methods: {self.valid_score_methods}"
             )
-            self.setup_optimizer(optimizer, all_params)
+        self._score_method = value
 
     @property
     def K(self) -> np.ndarray:
@@ -194,30 +237,50 @@ class RevVAMPNet(VAMPNet):
         self : RevVAMPNet
             Reference to self
         """
-        # Set model precision
-        self._set_model_precision()
+        try:
+            # Set model precision
+            self._set_model_precision()
 
-        # Set models to training mode
-        self.lobe.train()
-        self.lobe_timelagged.train()
+            # Set models to training mode
+            self.lobe.train()
+            self.lobe_timelagged.train()
 
-        # Validate input
-        if not isinstance(data, (list, tuple)) or len(data) != 2:
-            raise ValueError("Data must be a list/tuple of instantaneous and time-lagged batches")
+            # Set VAMP networks to training mode if they exist
+            if hasattr(self, '_vampu') and self._vampu is not None:
+                self._vampu.train()
+            if hasattr(self, '_vamps') and self._vamps is not None:
+                self._vamps.train()
 
-        # Prepare data
-        batch_0, batch_t = self._prepare_batch_data(data)
+            # Store data for later use
+            self.data = data
 
-        # Forward pass and loss computation
-        loss_value = self._forward_and_compute_loss(batch_0, batch_t)
+            # Validate input
+            if not isinstance(data, (list, tuple)) or len(data) != 2:
+                raise ValueError("Data must be a list/tuple of instantaneous and time-lagged batches")
 
-        # Backward pass and optimization
-        self._backward_and_optimize(loss_value)
+            # Prepare data
+            batch_0, batch_t = self._prepare_batch_data(data)
 
-        # Handle callbacks and scoring
-        self._handle_training_step(loss_value, train_score_callback)
+            # Forward pass and loss computation
+            loss_value = self._forward_and_compute_loss(batch_0, batch_t)
 
-        return self
+            # Backward pass and optimization
+            if self.optimizer is not None:
+                self.optimizer.zero_grad()
+                loss_value.backward()
+                self.optimizer.step()
+
+            # Handle callbacks and scoring
+            if train_score_callback is not None:
+                with torch.no_grad():
+                    train_score_callback(self._step, loss_value)
+
+            self._step += 1
+            return self
+
+        except Exception as e:
+            print(f"Partial fit failed with error: {str(e)}")
+            raise
 
     def validate(self, validation_data: Tuple[torch.Tensor]) -> torch.Tensor:
         """
@@ -406,7 +469,7 @@ class RevVAMPNet(VAMPNet):
     def ck_test(self,
                 steps: int,
                 tau: int,
-                n_states: int = args.num_classes) -> List[np.ndarray]:
+                n_states: Optional[int] = None) -> List[np.ndarray]:
         """
         Perform Chapman-Kolmogorov test comparing predicted vs estimated dynamics.
 
@@ -424,6 +487,8 @@ class RevVAMPNet(VAMPNet):
         List[np.ndarray]
             List containing [predicted, estimated] arrays of shape (n_states, n_states, steps)
         """
+        if n_states is None:
+            n_states = self.n_output
         try:
             # Initialize arrays
             predicted = np.zeros((n_states, n_states, steps))

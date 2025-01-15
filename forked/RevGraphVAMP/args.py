@@ -27,20 +27,20 @@ def buildParser():
 	parser.add_argument('--val-frac', default=0.3, type=float, help='fraction of dataset for validation')
 	parser.add_argument('--num_heads', default=2, type=int, help='number of heads in multihead attention')
 	parser.add_argument('--trained-model', default=None, type=str, help='path to the trained model for loading')
-	parser.add_argument('--train', default=False, action='store_true', help='Whether to train the model or not')
+	parser.add_argument('--train', default=True, action='store_true', help='Whether to train the model or not')
 	parser.add_argument('--use_backbone_atoms', default=False, action='store_true', help='Whether to use all the back bone atoms for training')
 	parser.add_argument('--dont-pool-backbone', default=False, action='store_true', help='Whether not to pool backbone atoms')
 	parser.add_argument('--h_g', type=int, default=8, help='Number of embedding dimension after backbone pooling')
 	parser.add_argument('--seq_file', type=str, default=None, help='Sequence file to initialize a one-hot encoding based on amino types')
-	parser.add_argument('--dist-data', type=str, default='dists_trpcage_bb_5nbrs_1ns_0.npz', help='the distnace data file')
-	parser.add_argument('--nbr-data', type=str, default='inds_trpcage_bb_5nbrs_1ns_0.npz', help='the neighbors data file')
+	parser.add_argument('--dist-data', type=str, default='red_5nbrs_1ns_dist_min.npy', help='the distnace data file')
+	parser.add_argument('--nbr-data', type=str, default='red_5nbrs_1ns_inds_min.npy', help='the neighbors data file')
 	# parser.add_argument('--dist-data', type=str, default='../intermediate/red_5nbrs_1ns_dist.npy',
 	# 					help='the distnace data file')
 	# parser.add_argument('--nbr-data', type=str, default='../intermediate/red_5nbrs_1ns_inds.npy',
 	# 					help='the neighbors data file')
-	parser.add_argument('--data-path', type=str, default='../intermediate/ala_5nbrs_1ns_',
+	parser.add_argument('--data-path', type=str, default='intermediate/ala_5nbrs_1ns_',
 						help='the data file predix')
-	parser.add_argument('--data-info', type=str, default='../intermediate/red_5nbrs_1ns_datainfo_min.npy',
+	parser.add_argument('--data-info', type=str, default='intermediate/red_5nbrs_1ns_datainfo_min.npy',
 	                    help='the data file predix')
 	parser.add_argument('--score-method', type=str, default='VAMPCE', help='the scoring method of VAMPNet')
 	parser.add_argument('--residual', action='store_true', default=False, help='Whether to use residual connections')
