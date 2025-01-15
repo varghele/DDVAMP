@@ -2,10 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Union
-from torch_scatter import scatter_mean
 from components.layers.gat import PyGGAT
 from components.layers.gcn_interaction import GCNInteraction
 from components.distances.gaussian import GaussianDistance
+from args.args import buildParser
+
+args = buildParser().parse_args()
+
 
 class GraphVampNet(nn.Module):
     """
@@ -20,20 +23,20 @@ class GraphVampNet(nn.Module):
 
     def __init__(
             self,
-            num_atoms: int,
-            num_neighbors: int,
-            n_classes: int,
-            n_conv: int,
-            h_a: int,
-            h_g: Optional[int] = None,
-            dmin: float = 0.0,
-            dmax: float = 10.0,
-            step: float = 0.1,
+            num_atoms: int = args.num_atoms,
+            num_neighbors: int = args.num_neighbors,
+            n_classes: int = args.num_classes,
+            n_conv: int = args.n_conv,
+            h_a: int = args.h_a,
+            h_g: Optional[int] = args.h_g,
+            dmin: float = args.dmin,
+            dmax: float = args.dmax,
+            step: float = args.step,
             conv_type: str = 'SchNet',
-            num_heads: int = 4,
-            residual: bool = True,
-            use_backbone_atoms: bool = False,
-            attention_pool: bool = False,
+            num_heads: int = args.num_heads,
+            residual: bool = args.residual,
+            use_backbone_atoms: bool = args.use_backbone_atoms,
+            attention_pool: bool = args.attention_pool,
             seq_file: Optional[str] = None,
             atom_embedding_init: str = 'normal',
             use_pre_trained: bool = False,
@@ -81,7 +84,7 @@ class GraphVampNet(nn.Module):
         pre_trained_weights_file : Optional[str]
             Path to pre-trained weights file
         """
-        super().__init__()
+        super(GraphVampNet).__init__()
 
         # Store parameters
         self.num_atoms = num_atoms

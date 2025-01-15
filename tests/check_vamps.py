@@ -1,9 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
-import numpy as np
-from typing import List, Tuple
-from components.scores.vamps import VAMPS
+from components.models.vamps import VAMPS
 
 
 class TestVAMPS:

@@ -110,11 +110,25 @@ class GraphVampNet(nn.Module):
 	attention_pool: bool
 			Whether to add Graph Attention layer between embedding learned before performing graph pooling
 	'''
-	def __init__(self, seq_file=args.seq_file, num_atoms=args.num_atoms, num_neighbors=args.num_neighbors,
-				n_classes=args.num_classes, n_conv=args.n_conv, dmin=args.dmin, dmax=args.dmax, step=args.step,
-				h_a=args.h_a, h_g=args.h_g, atom_embedding_init='normal', use_pre_trained=False, activation=nn.ReLU(),
-				pre_trained_weights_file=None, conv_type=args.conv_type, num_heads=args.num_heads, residual=args.residual,
-				 use_backbone_atoms=args.use_backbone_atoms, dont_pool_backbone=args.dont_pool_backbone,
+	def __init__(self,
+				 seq_file=args.seq_file,
+				 num_atoms=args.num_atoms,
+				 num_neighbors=args.num_neighbors,
+				 n_classes=args.num_classes,
+				 n_conv=args.n_conv,
+				 dmin=args.dmin,
+				 dmax=args.dmax,
+				 step=args.step,
+				 h_a=args.h_a,
+				 h_g=args.h_g,
+				 atom_embedding_init='normal',
+				 use_pre_trained=False, activation=nn.ReLU(),
+				 pre_trained_weights_file=None,
+				 conv_type=args.conv_type,
+				 num_heads=args.num_heads,
+				 residual=args.residual,
+				 use_backbone_atoms=args.use_backbone_atoms,
+				 dont_pool_backbone=args.dont_pool_backbone,
 				 attention_pool=args.attention_pool):
 
 		super(GraphVampNet, self).__init__()

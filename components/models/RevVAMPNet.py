@@ -5,6 +5,7 @@ from typing import Optional, Union, Callable, Tuple, List
 from deeptime.decomposition.deep import VAMPNet
 from deeptime.util.torch import disable_TF32, multi_dot
 from tqdm import tqdm
+from args.args import buildParser
 
 if torch.cuda.is_available():
 	device = torch.device('cuda')
@@ -14,7 +15,7 @@ else:
 	device = torch.device('cpu')
 
 LAG_EPOCH = 1000
-
+args = buildParser().parse_args()
 
 class RevVAMPNet(VAMPNet):
     """

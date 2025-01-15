@@ -3,6 +3,8 @@ from components.distances.gaussian import GaussianDistance
 from components.layers.linear import LinearLayer
 from components.layers.cfconv import CFConv
 from components.models.GraphVAMPNet import GraphVampNet
+from components.losses.vampnet_loss import vampnet_loss
+from components.scores.vamp_score import vamp_score
 
 try:
     import torch_scatter
@@ -14,7 +16,9 @@ except ImportError:
 __all__ = [
     'GaussianDistance',
     'LinearLayer',
-    'CFConv'
+    'CFConv',
+    'vampnet_loss',
+    'vamp_score'
 ]
 
 if HAS_TORCH_SCATTER:

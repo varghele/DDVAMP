@@ -3,8 +3,6 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 from deeptime.util.data import TrajectoryDataset
-from tqdm import tqdm
-import matplotlib.pyplot as plt
 from copy import deepcopy
 import warnings
 import pickle
@@ -12,9 +10,9 @@ import pickle
 from args import buildParser
 from components.models.GraphVAMPNet import GraphVampNet
 from components.models.RevVAMPNet import RevVAMPNet
-from components.scores.vamps import VAMPS
-from components.scores.vampu import VAMPU
-from utils_vamp import EarlyStopping, unflatten, plot_its, plot_ck_test, get_its, get_ck_test
+from components.models.vamps import VAMPS
+from components.models.vampu import VAMPU
+#from utils_vamp import EarlyStopping, unflatten, plot_its, plot_ck_test, get_its, get_ck_test
 
 # Ignore deprecation warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning)
