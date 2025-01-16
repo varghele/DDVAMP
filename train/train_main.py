@@ -1,3 +1,4 @@
+import os
 import torch
 from torch.utils.data import DataLoader
 from copy import deepcopy
@@ -11,6 +12,8 @@ from components.models.GraphVAMPNet import GraphVampNet
 from components.models.vamps import VAMPS
 from components.models.vampu import VAMPU
 from components.models.RevVAMPNet import RevVAMPNet
+
+from train.train_vamp import train_vamp
 
 def setup_device():
     """Set up and return the appropriate device (CPU/CUDA)."""
@@ -97,33 +100,86 @@ def initialize_model(args, device):
         vamps=vls
     )
 
-    return vampnet
+    return lobe, vampnet, vlu, vls
+
+
+def save_training_metrics(save_folder, model):
+    """Save training and validation scores."""
+    with open(f'{save_folder}/train_scores.npy', 'wb') as f:
+        np.save(f, model.train_scores)
+
+    with open(f'{save_folder}/validation_scores.npy', 'wb') as f:
+        np.save(f, model.validation_scores)
+
+
+#def plot_training_curves(train_scores, val_scores, save_folder):
+#    """Plot and save training and validation curves."""
+#    plt.figure(figsize=(10, 6))
+#    plt.loglog(*train_scores.T, label='training')
+#    plt.loglog(*val_scores.T, label='validation')
+#    plt.xlabel('Step')
+#    plt.ylabel('Score')
+#    plt.legend()
+#    plt.grid(True)
+#    plt.title('Training and Validation Scores')
+#    plt.savefig(f'{save_folder}/scores.png')
+#    plt.close()
 
 
 def main():
-    # Setup
+    # Setup and initialization
     device = setup_device()
     args = buildParser().parse_args()
 
-    # Set file path
+    # Create save directories and log arguments
+    log_pth = f'{args.save_folder}/training.log'
+    if not os.path.exists(args.save_folder):
+        print('Creating folder for saving checkpoints...')
+        os.makedirs(args.save_folder)
+
+    with open(args.save_folder + '/args.txt', 'w') as f:
+        f.write(str(args))
+
+    # Data loading and preparation
     file_path = '../datasets/traj_revgraphvamp_org/intermediate/'
-
-    # Load data
     traj_length, dists1, inds1 = load_data(file_path)
-
-    # Prepare dataset
     dataset = prepare_dataset(dists1, inds1, traj_length, args)
-
-    # Create dataloaders
     loader_train, loader_val, loader_train_all = create_dataloaders(dataset, args)
 
-    # Initialize model
-    model = initialize_model(args, device)
-
-
-
+    # Model initialization
+    lobe, vampnet, vlu, vls = initialize_model(args, device)
     print(f"Model score method: {args.score_method}")
     print(f"Dataset type: {type(loader_train)}")
+
+    # Training
+    if True: #args.train:
+        print("Starting model training...")
+
+        # Train model
+        model, all_train_epoch = train_vamp(
+            args=args,
+            lobe=lobe,
+            vampnet=vampnet,
+            vlu=vlu,
+            vls=vls,
+            train_loader=loader_train,
+            n_epochs=args.epochs,
+            validation_loader=loader_val,
+            loader_train_all=loader_train_all
+        )
+
+        # Save training metrics
+        save_training_metrics(args.save_folder, model)
+
+        # Plot and save training curves
+        #plot_training_curves(
+        #    vampnet.train_scores[-all_train_epoch:],
+        #    vampnet.validation_scores,
+        #    args.save_folder
+        #)
+
+        print("Model training completed")
+
 
 
 if __name__ == "__main__":

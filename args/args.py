@@ -40,6 +40,7 @@ def buildParser():
 	training_group.add_argument('--batch_size', type=int, default=32, help='Training batch size')
 	training_group.add_argument('--val_frac', type=float, default=0.2, help='Validation fraction')
 	training_group.add_argument('--epochs', type=int, default=10, help='Number of training epochs')
+	training_group.add_argument('--pre-train-epoch', type=int, default=2, help='Number of pre-training epochs')
 	training_group.add_argument('--seed', type=int, default=42, help='Random seed')
 	training_group.add_argument('--score_method', type=str, default='VAMPCE', help='Scoring method for VAMPNet')
 

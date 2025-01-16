@@ -18,6 +18,7 @@ else:
 
 LAG_EPOCH = 1000
 
+
 class RevVAMPNet(VAMPNet):
     """
     Reversible VAMPNet implementation that extends VAMPNet with additional VAMP-specific functionality.
@@ -308,6 +309,73 @@ class RevVAMPNet(VAMPNet):
                 score_value = self._compute_validation_score(val, val_t)
 
                 return score_value
+
+    def train_US(self, data, lr_rate=1e-3, train_u=True, out_log=False):
+        """Train the U and S networks of the VAMPNet model.
+
+        Args:
+            data: Tuple of (x_0, x_t) containing instantaneous and time-lagged data
+            lr_rate: Learning rate for optimization
+            train_u: Whether to train the U network
+            out_log: Whether to print loss values
+        """
+        # Freeze main network
+        self.lobe.requires_grad_(False)
+        self.lobe_timelagged.requires_grad_(False)
+
+        # Configure U network training
+        if train_u:
+            self._vampu.train()
+            self._vampu.requires_grad_(True)
+            self._vampu.u_kernel.retain_grad()
+        else:
+            self._vampu.requires_grad_(False)
+
+        # Configure S network training
+        self._vamps.train()
+        self._vamps.s_kernel.retain_grad()
+
+        # Prepare data
+        self.optimizer.zero_grad()
+        x_0 = torch.Tensor(data[0]).to(device)
+        x_t = torch.Tensor(data[1]).to(device)
+
+        # Forward pass through U network
+        u_out, v_out, C00_out, C11_out, C01_out, sigma_out, mu_out = self._vampu([x_0, x_t])
+
+        # Forward pass through S network
+        Ve_out, K_out, p_out, S_out = self._vamps([
+            x_0, x_t, u_out, v_out, C00_out,
+            C11_out, C01_out, sigma_out
+        ])
+
+        # Store Koopman matrix
+        self._K = K_out[0]
+
+        # Calculate loss and update weights
+        loss_value = vampnet_loss(
+            Ve_out,
+            Ve_out,
+            method=self.score_method,
+            epsilon=self.epsilon,
+            mode=self.score_mode
+        )
+        loss_value.backward()
+        self.optimizer.step()
+
+        # Log loss if requested
+        if out_log:
+            print(f"Loss: {loss_value.item():.4f}")
+
+        # Restore network states
+        self.lobe.requires_grad_(True)
+        self.lobe_timelagged.requires_grad_(True)
+        self.lobe.train()
+        self.lobe_timelagged.train()
+
+        if not train_u:
+            self._vampu.requires_grad_(True)
+            self._vampu.train()
 
     def _set_model_precision(self):
         """Set model precision based on dtype."""
