@@ -11,7 +11,8 @@ def train_US(
         train_loader: torch.utils.data.DataLoader,
         n_epochs: int,
         args,
-        vampnet: Optional[nn.Module] = None,
+        #vampnet: Optional[nn.Module] = None,
+        vampnet, #Fix to pass correct net
         lobe: Optional[nn.Module] = None,
         vlu: Optional[nn.Module] = None,
         vls: Optional[nn.Module] = None,

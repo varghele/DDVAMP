@@ -40,7 +40,13 @@ class CFConv(nn.Module):
         Cutoff distance for interactions
     """
 
-    def __init__(self, n_gaussians, n_filters, cutoff=5.0, activation=nn.Tanh(), use_attention=True):
+    def __init__(self,
+                 n_gaussians,
+                 n_filters,
+                 cutoff=5.0,
+                 activation=nn.Tanh(),
+                 normalization_layer=None,
+                 use_attention=True):
         super().__init__()
 
         # Create filter generator using LinearLayer
@@ -67,7 +73,10 @@ class CFConv(nn.Module):
             self.nbr_filter = nn.Parameter(torch.Tensor(n_filters, 1))
             nn.init.xavier_uniform_(self.nbr_filter, gain=1.414)
 
-        self.cutoff = cutoff
+        self.cutoff = cutoff #NOT IMPLEMENTED YET! DOESNT DO ANYTHING
+
+        # Add normalization layer to mirror original
+        self.normalization_layer = normalization_layer
 
     def forward(self, features, rbf_expansion, neighbor_list):
         """
@@ -96,22 +105,29 @@ class CFConv(nn.Module):
         rbf_expansion = rbf_expansion.to(device)
         neighbor_list = neighbor_list.to(device)
 
+        # Feature tensor needs to also be transformed from [n_frames, n_atoms, n_features]
+		# to [n_frames, n_atoms, n_neighbors, n_features]
         batch_size, n_atoms, n_neighbors = neighbor_list.size()
 
         # Generate continuous filters from RBF expansion
-        conv_filter = self.filter_generator(rbf_expansion)
+        # Filter has size [n_frames, n_atoms, n_neighbors, n_features]
+        conv_filter = self.filter_generator(rbf_expansion.to(torch.float32))
         conv_filter = conv_filter.to(device)
 
         # Ensure neighbor_list is int64 and properly shaped for gathering
         neighbor_list = neighbor_list.to(torch.int64)
+        # size [n_frames, n_atoms*n_neighbors, 1]
         neighbor_list = neighbor_list.reshape(-1, n_atoms * n_neighbors, 1)
+        # size [n_frames, n_atoms*n_neighbors, n_features]
         neighbor_list = neighbor_list.expand(-1, -1, features.size(2))
 
         # Gather features of neighboring atoms
         neighbor_features = torch.gather(features, 1, neighbor_list)
+        # Reshape back to [n_frames, n_atoms, n_neighbors, n_features] for element-wise multiplication
         neighbor_features = neighbor_features.reshape(batch_size, n_atoms, n_neighbors, -1)
 
         # Apply continuous filters to neighbor features
+        # element-wise multiplication of the features with the convolutional filter
         conv_features = neighbor_features * conv_filter
 
         # Aggregate features using either attention or summation
@@ -119,9 +135,19 @@ class CFConv(nn.Module):
             # Move nbr_filter to correct device
             nbr_filter = self.nbr_filter.to(device)
             # Compute attention weights and apply them
+            # [B, N, M, n_features]
             attention_weights = torch.matmul(conv_features, nbr_filter).squeeze(-1)
+            # [B, N, 1, M]
             attention_weights = F.softmax(attention_weights, dim=-1)
+            # [B, N, M]
             aggregated_features = torch.einsum('bij,bijc->bic', attention_weights, conv_features)
+
+            if self.normalization_layer is not None:
+                #if isinstance(self.normalization_layer, NeighborNormLayer):
+                #    return self.normalization_layer(aggregated_features, n_neighbors)
+                #else:
+                return self.normalization_layer(aggregated_features)
+
             return aggregated_features, attention_weights
         else:
             # Simple summation aggregation

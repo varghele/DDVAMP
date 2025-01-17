@@ -6,7 +6,10 @@ from deeptime.decomposition.deep import VAMPNet
 from deeptime.util.torch import disable_TF32, multi_dot
 from tqdm import tqdm
 from args.args import buildParser
+from components.scores.vamp_score import vamp_score
 from components.losses.vampnet_loss import vampnet_loss
+from components.computations.computations import covariances_E, matrix_inverse, _compute_pi
+
 
 # Device configuration
 if torch.cuda.is_available():
@@ -117,7 +120,7 @@ class RevVAMPNet(VAMPNet):
             self.setup_optimizer(optimizer, list(self.lobe.parameters()) + list(self.lobe_timelagged.parameters()) +
                                  list(self._vampu.parameters()) + list(self._vamps.parameters()))
 
-    def score_method(self, value: str) -> None:
+    def score_method(self, value: str):
         """
         Set the scoring method if it's valid. (this has to be done to extend the deeptime vampnet)
 
@@ -285,30 +288,128 @@ class RevVAMPNet(VAMPNet):
 
     def validate(self, validation_data: Tuple[torch.Tensor]) -> torch.Tensor:
         """
-        Evaluate current model on validation data.
+        Evaluate the current model on validation data and return the configured score.
 
         Parameters
         ----------
-        validation_data : tuple of torch.Tensor
-            Tuple containing instantaneous and time-lagged validation data
+        validation_data : Tuple[torch.Tensor]
+            Tuple containing (x_t, x_t+τ) validation data tensors, where:
+            - x_t is the instantaneous data
+            - x_t+τ is the time-lagged data
 
         Returns
         -------
         torch.Tensor
-            Validation score
+            Computed validation score based on the configured scoring method
         """
         with disable_TF32():
-            # Set models to eval mode
-            self._set_eval_mode()
+            # Set all networks to evaluation mode
+            self.lobe.eval()
+            self.lobe_timelagged.eval()
+            if self.vamps is not None:
+                self.vamps.eval()
+                self.vampu.eval()
 
             with torch.no_grad():
-                # Forward pass
-                val, val_t = self._forward_validation(validation_data)
+                # Forward pass through the networks
+                val_t0 = self.lobe(validation_data[0])
+                val_tlag = self.lobe_timelagged(validation_data[1])
 
-                # Compute score
-                score_value = self._compute_validation_score(val, val_t)
+                # Compute score based on method
+                if self.score_method == 'VAMPCE':
+                    # Compute VAMP-U outputs
+                    (u_out, v_out, C00_out, C11_out,
+                     C01_out, sigma_out, mu_out) = self._vampu([val_t0, val_tlag])
+
+                    # Compute VAMP-S outputs and final score
+                    Ve_out, K_out, p_out, S_out = self._vamps([
+                        val_t0, val_tlag, u_out, v_out, C00_out,
+                        C11_out, C01_out, sigma_out])
+
+                    score_value = vamp_score(
+                        Ve_out, Ve_out,
+                        method=self.score_method,
+                        mode=self.score_mode,
+                        epsilon=self.epsilon
+                    )
+                else:
+                    score_value = vamp_score(
+                        val_t0, val_tlag,
+                        method=self.score_method,
+                        mode=self.score_mode,
+                        epsilon=self.epsilon
+                    )
 
                 return score_value
+
+    def update_auxiliary_weights(self, data, optimize_u: bool = True, optimize_S: bool = False,
+                                 reset_weights: bool = True):
+        """
+        Update the weights for the auxiliary model and return new output.
+
+        Parameters
+        ----------
+        data : tuple
+            Tuple containing (chi_0, chi_t) time-lagged data
+        optimize_u : bool, optional
+            Whether to optimize the u vector, by default True
+        optimize_S : bool, optional
+            Whether to optimize the S matrix, by default False
+        reset_weights : bool, optional
+            Whether to reset the weights for the vanilla VAMPNet model, by default True
+
+        Returns
+        -------
+        tuple
+            Updated K matrix and optimized parameters
+        """
+        # Unpack and prepare data
+        batch_0, batch_t = data[0], data[1]
+        chi_0 = torch.Tensor(batch_0).to(device)
+        chi_t = torch.Tensor(batch_t).to(device)
+
+        # Compute covariances
+        C0inv, Ctau = covariances_E(chi_0, chi_t)
+
+        # Get initial VAMP parameters
+        (u_outd, v_outd, C00_outd, C11_outd,
+         C01_outd, sigma_outd, mu_outd) = self._vampu([chi_0, chi_t])
+
+        # Get initial VAMPS parameters
+        Ve_out, K_out, p_out, S_out = self._vamps([
+            chi_0, chi_t, u_outd, v_outd, C00_outd,
+            C11_outd, C01_outd, sigma_outd])
+
+        # Compute Koopman operator
+        K = torch.Tensor(C0inv) @ Ctau.to('cpu')
+        self._K = K_out[0]
+
+        # Update u vector if requested
+        if optimize_u:
+            pi = _compute_pi(K)
+            u_kernel = np.log(np.abs(C0inv @ pi))
+            for param in self.vampu.parameters():
+                with torch.no_grad():
+                    param[:] = torch.Tensor(u_kernel)
+
+        # Update S matrix if requested
+        if optimize_S:
+            # Compute updated VAMP parameters with new u vector
+            (u_out, v_out, C00_out, C11_out,
+             C01_out, sigma, mu_out) = self.vampu([chi_0, chi_t])
+
+            # Compute S matrix
+            sigma_inv = matrix_inverse(sigma[0])
+            S_nonrev = K @ sigma_inv
+            S_rev = 0.5 * (S_nonrev + S_nonrev.t())
+            s_kernel = np.log(np.abs(0.5 * S_rev))
+
+            # Update VAMPS parameters
+            for param in self.vamps.parameters():
+                with torch.no_grad():
+                    param[:] = torch.Tensor(s_kernel)
+
+        return self._K
 
     def train_US(self, data, lr_rate=1e-3, train_u=True, out_log=False):
         """Train the U and S networks of the VAMPNet model.

@@ -44,7 +44,7 @@ def vampnet_loss(data: torch.Tensor,
     if data.shape != data_lagged.shape:
         raise ValueError("Data and time-lagged data must have the same shape")
 
-    if method not in ['VAMP1', 'VAMP2', 'VAMPE']:
+    if method not in ['VAMP1', 'VAMP2', 'VAMPE', 'VAMPCE']:
         raise ValueError(f"Unknown scoring method: {method}")
 
     if mode not in ['trunc', 'regularize']:

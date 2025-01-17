@@ -6,14 +6,16 @@ from train.utils.record_result import record_result
 from tqdm import tqdm
 import numpy as np
 from copy import deepcopy
-from components.models.RevVAMPNet import RevVAMPNet as VAMPNet
+from deeptime.decomposition.deep import VAMPNet
+from components.models.RevVAMPNet import RevVAMPNet
 
 
 def train_vamp(
         train_loader: torch.utils.data.DataLoader,
         n_epochs: int,
         args,
-        vampnet: Optional[nn.Module] = None,
+        #vampnet: Optional[VAMPNet] = None,
+        vampnet, # Fix to pass correct net
         lobe: Optional[nn.Module] = None,
         vlu: Optional[nn.Module] = None,
         vls: Optional[nn.Module] = None,
@@ -21,7 +23,7 @@ def train_vamp(
         validation_loader: Optional[torch.utils.data.DataLoader] = None,
         loader_train_all: Optional[torch.utils.data.DataLoader] = None,
         log_pth: str = None
-) -> Tuple[VAMPNet, int]:
+) -> Tuple[RevVAMPNet, int]:
     """Train the VAMPNet model with optional VAMPCE pre-training.
 
     Args:
