@@ -1,0 +1,16 @@
+name: ddvamp
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - deeptime
+  - pytorch
+  - pytorch-cuda=12.1
+  - torchaudio
+  - torchvision
+  - pyg
+  - conda-forge::matplotlib
+  - conda-forge::mdshare
+  - anaconda::h5py
+  - anaconda::pytest
+  - conda-forge::torch-scatter
