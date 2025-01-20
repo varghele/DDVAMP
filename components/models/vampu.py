@@ -11,7 +11,7 @@ class VAMPU(nn.Module):
 
     def __init__(self,
                  units: int,
-                 activation: nn.Module,
+                 activation, #: nn.Module,
                  device: Optional[torch.device] = None):
         """
         Initialize VAMP-U module.

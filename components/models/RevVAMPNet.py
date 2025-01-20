@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 from typing import Optional, Union, Callable, Tuple, List
 from deeptime.decomposition.deep import VAMPNet
-from deeptime.util.torch import disable_TF32, multi_dot
+from deeptime.util.torch import disable_TF32, multi_dot, map_data
 from tqdm import tqdm
 from args.args import buildParser
 from components.scores.vamp_score import vamp_score
@@ -97,6 +97,8 @@ class RevVAMPNet(VAMPNet):
         self._lag = args.tau
         self._K = None
         self.data = None
+        self._device = device
+        self._dtype = dtype
 
         # Initialize optimizer
         #if isinstance(optimizer, str):
@@ -136,6 +138,34 @@ class RevVAMPNet(VAMPNet):
                 f"Available methods: {self.valid_score_methods}"
             )
         self._score_method = value
+
+    def transform(self, data, instantaneous: bool = True, **kwargs):
+        """Transforms data through the instantaneous or time-shifted network lobe.
+
+        Parameters
+        ----------
+        data : numpy array or torch tensor
+            The data to transform.
+        instantaneous : bool, default=True
+            Whether to use the instantaneous lobe or the time-shifted lobe for transformation.
+        **kwargs
+            Ignored kwargs for api compatibility.
+
+        Returns
+        -------
+        transform : array_like
+            List of numpy array or numpy array containing transformed data.
+        """
+        # Select appropriate network without calling eval()
+        net = self._lobe if instantaneous else self._lobe_timelagged
+
+        # Process data through network
+        out = []
+        for data_tensor in map_data(data, device=self._device, dtype=self._dtype):
+            with torch.no_grad():
+                out.append(net(data_tensor).cpu().numpy())
+
+        return out if len(out) > 1 else out[0]
 
     @property
     def K(self) -> np.ndarray:

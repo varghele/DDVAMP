@@ -11,7 +11,7 @@ class VAMPS(nn.Module):
 
     def __init__(self,
                  units: int,
-                 activation: nn.Module,
+                 activation, #: nn.Module,
                  order: int = 20,
                  renorm: bool = False,
                  device: Optional[torch.device] = None):
