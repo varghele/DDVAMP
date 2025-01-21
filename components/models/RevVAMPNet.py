@@ -9,6 +9,7 @@ from args.args import buildParser
 from components.scores.vamp_score import vamp_score
 from components.losses.vampnet_loss import vampnet_loss
 from components.computations.computations import covariances_E, matrix_inverse, _compute_pi
+from copy import deepcopy
 
 
 # Device configuration
@@ -99,73 +100,13 @@ class RevVAMPNet(VAMPNet):
         self.data = None
         self._device = device
         self._dtype = dtype
-
-        # Initialize optimizer
-        #if isinstance(optimizer, str):
-        #    optimizer = getattr(torch.optim, optimizer)
-
-        # Collect all parameters
-        #all_params = list(self.lobe.parameters())
-        #if self.lobe_timelagged is not None:
-        #    all_params.extend(list(self.lobe_timelagged.parameters()))
-        #if self._vampu is not None:
-        #    all_params.extend(list(self._vampu.parameters()))
-        #if self._vamps is not None:
-        #    all_params.extend(list(self._vamps.parameters()))
-
-        # Create optimizer
-        # self.optimizer = optimizer(all_params, lr=learning_rate)
+        self._reestimated = False
 
         # Validate VAMPCE configuration
         if score_method == 'VAMPCE':
             assert vampu is not None and vamps is not None, f"vampu and vamps module must be defined "
             self.setup_optimizer(optimizer, list(self.lobe.parameters()) + list(self.lobe_timelagged.parameters()) +
                                  list(self._vampu.parameters()) + list(self._vamps.parameters()))
-
-    def score_method(self, value: str):
-        """
-        Set the scoring method if it's valid. (this has to be done to extend the deeptime vampnet)
-
-        Args:
-            value (str): The scoring method to be set
-
-        Raises:
-            AssertionError: If the provided value is not in valid_score_methods
-        """
-        if value not in self.valid_score_methods:
-            raise ValueError(
-                f"Invalid scoring method '{value}'. "
-                f"Available methods: {self.valid_score_methods}"
-            )
-        self._score_method = value
-
-    def transform(self, data, instantaneous: bool = True, **kwargs):
-        """Transforms data through the instantaneous or time-shifted network lobe.
-
-        Parameters
-        ----------
-        data : numpy array or torch tensor
-            The data to transform.
-        instantaneous : bool, default=True
-            Whether to use the instantaneous lobe or the time-shifted lobe for transformation.
-        **kwargs
-            Ignored kwargs for api compatibility.
-
-        Returns
-        -------
-        transform : array_like
-            List of numpy array or numpy array containing transformed data.
-        """
-        # Select appropriate network without calling eval()
-        net = self._lobe if instantaneous else self._lobe_timelagged
-
-        # Process data through network
-        out = []
-        for data_tensor in map_data(data, device=self._device, dtype=self._dtype):
-            with torch.no_grad():
-                out.append(net(data_tensor).cpu().numpy())
-
-        return out if len(out) > 1 else out[0]
 
     @property
     def K(self) -> np.ndarray:
@@ -204,6 +145,77 @@ class RevVAMPNet(VAMPNet):
             VAMP-S neural network module
         """
         return self._vamps
+
+    def sync_lobes(self):
+        """Manually sync weights between lobes to improve training stability"""
+        with torch.no_grad():
+            for param_main, param_lagged in zip(
+                    self._lobe.parameters(),
+                    self._lobe_timelagged.parameters()
+            ):
+                param_lagged.data.copy_(param_main.data)
+
+    def score_method(self, value: str):
+        """
+        Set the scoring method if it's valid. (this has to be done to extend the deeptime vampnet)
+
+        Args:
+            value (str): The scoring method to be set
+
+        Raises:
+            AssertionError: If the provided value is not in valid_score_methods
+        """
+        if value not in self.valid_score_methods:
+            raise ValueError(
+                f"Invalid scoring method '{value}'. "
+                f"Available methods: {self.valid_score_methods}"
+            )
+        self._score_method = value
+
+    def transform(self, data, instantaneous: bool = True, **kwargs):
+        """Transforms data through the instantaneous or time-shifted network lobe.
+
+        Parameters
+        ----------
+        data : numpy array or torch tensor
+            The data to transform.
+        instantaneous : bool, default=True
+            Whether to use the instantaneous lobe or the time-shifted lobe for transformation.
+        **kwargs
+            Ignored kwargs for api compatibility.
+
+        Returns
+        -------
+        transform : array_like
+            List of numpy array or numpy array containing transformed data.
+        """
+        """Add state checks and management"""
+        out = []
+        for data_tensor in map_data(data, device=self._device, dtype=self._dtype):
+            with torch.no_grad():
+                # Check input
+                if torch.isnan(data_tensor).any():
+                    raise ValueError("NaN values in input data")
+
+                # Process through appropriate lobe
+                if instantaneous:
+                    result = self._lobe(data_tensor)
+                else:
+                    result = self._lobe_timelagged(data_tensor)
+
+                # Check output
+                if torch.isnan(result).any():
+                    # Try to recover by resyncing lobes
+                    self.sync_lobes()
+                    # Retry computation
+                    if instantaneous:
+                        result = self._lobe(data_tensor)
+                    else:
+                        result = self._lobe_timelagged(data_tensor)
+
+                out.append(result.cpu().numpy())
+
+        return out if len(out) > 1 else out[0]
 
     @property
     def lag(self) -> int:
@@ -292,8 +304,12 @@ class RevVAMPNet(VAMPNet):
             if not isinstance(data, (list, tuple)) or len(data) != 2:
                 raise ValueError("Data must be a list/tuple of instantaneous and time-lagged batches")
 
-            # Prepare data
-            batch_0, batch_t = self._prepare_batch_data(data)
+            # Prepare data for training
+            batch_0, batch_t = data[0], data[1]
+            if isinstance(batch_0, np.ndarray):
+                batch_0 = torch.from_numpy(batch_0.astype(self.dtype)).to(device=self.device)
+            if isinstance(batch_t, np.ndarray):
+                batch_t = torch.from_numpy(batch_t.astype(self.dtype)).to(device=self.device)
 
             # Forward pass and loss computation
             loss_value = self._forward_and_compute_loss(batch_0, batch_t)
@@ -302,6 +318,11 @@ class RevVAMPNet(VAMPNet):
             if self.optimizer is not None:
                 self.optimizer.zero_grad()
                 loss_value.backward()
+                # Add gradient clipping
+                torch.nn.utils.clip_grad_norm_(self.lobe.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self.lobe_timelagged.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self._vampu.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self._vamps.parameters(), max_norm=1.0)
                 self.optimizer.step()
 
             # Handle callbacks and scoring
@@ -487,7 +508,7 @@ class RevVAMPNet(VAMPNet):
         loss_value = vampnet_loss(
             Ve_out,
             Ve_out,
-            method=self.score_method,
+            method=str(self.score_method),
             epsilon=self.epsilon,
             mode=self.score_mode
         )
@@ -517,16 +538,6 @@ class RevVAMPNet(VAMPNet):
             self._lobe = self._lobe.double()
             self._lobe_timelagged = self._lobe_timelagged.double()
 
-    def _prepare_batch_data(self, data: Tuple) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Prepare batch data for training."""
-        batch_0, batch_t = data[0], data[1]
-
-        if isinstance(batch_0, np.ndarray):
-            batch_0 = torch.from_numpy(batch_0.astype(self.dtype)).to(device=self.device)
-        if isinstance(batch_t, np.ndarray):
-            batch_t = torch.from_numpy(batch_t.astype(self.dtype)).to(device=self.device)
-
-        return batch_0, batch_t
 
     def _forward_and_compute_loss(self, batch_0: torch.Tensor, batch_t: torch.Tensor) -> torch.Tensor:
         """Perform forward pass and compute loss."""

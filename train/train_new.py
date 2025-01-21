@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from copy import deepcopy
 from args import buildParser
@@ -16,8 +17,30 @@ from typing import Optional, Tuple
 from components.models.vamps import VAMPS
 from components.models.vampu import VAMPU
 
-def record_result():
+
+def flush_cuda_cache():
+    """Flush CUDA cache and clear memory."""
+    try:
+        # Empty CUDA cache
+        torch.cuda.empty_cache()
+
+        # Synchronize CUDA streams
+        torch.cuda.synchronize()
+
+        # Optional: Force garbage collection
+        #import gc
+        #gc.collect()
+
+    except Exception as e:
+        print(f"Warning: Could not flush CUDA cache: {str(e)}")
+
+def record_result(arg1, arg2):
     pass
+
+class ExpActivation(nn.Module):
+    """Exponential activation function as a proper nn.Module."""
+    def forward(self, x):
+        return torch.exp(x)
 
 class RevVAMPTrainer:
     def __init__(self, args):
@@ -97,8 +120,8 @@ class RevVAMPTrainer:
 
         print('Number of parameters:', count_parameters(lobe))
 
-        vlu = VAMPU(self.args.num_classes, activation=torch.exp)
-        vls = VAMPS(self.args.num_classes, activation=torch.exp, renorm=True)
+        vlu = VAMPU(self.args.num_classes, activation=ExpActivation())
+        vls = VAMPS(self.args.num_classes, activation=ExpActivation(), renorm=True)
 
         vampnet = RevVAMPNet(
             lobe=lobe,
@@ -137,8 +160,17 @@ class RevVAMPTrainer:
         n_iter = 0
         with torch.no_grad():
             for batch_0, batch_t in self.loader_train:
+                # Trying to flush CUDA to make training more stable
                 torch.cuda.empty_cache()
+                flush_cuda_cache()
+
                 batch_size = len(batch_0)
+
+                # Check inputs
+                if torch.isnan(batch_0).any() or torch.isnan(batch_t).any():
+                    print("Warning: NaN values in batch, skipping")
+                    continue
+
                 state_probs[n_iter:n_iter + batch_size] = self.vampnet.transform(batch_0)
                 state_probs_tau[n_iter:n_iter + batch_size] = self.vampnet.transform(
                     batch_t, instantaneous=False
@@ -230,6 +262,7 @@ class RevVAMPTrainer:
             best_dict = None
 
             # Pre-training loop
+            print("Entering Pre-Training")
             for epoch in tqdm(range(pre_epoch)):
                 try:
                     for batch_0, batch_t in self.loader_train:
@@ -373,6 +406,8 @@ class RevVAMPTrainer:
 
 def main():
     args = buildParser().parse_args()
+    # Flush cache before processing each batch
+    flush_cuda_cache()
     trainer = RevVAMPTrainer(args)
     trainer.train()
 
