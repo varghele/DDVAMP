@@ -1,3 +1,5 @@
+import time
+
 import torch
 from typing import Optional, Union, Callable, Tuple, List
 import torch.nn as nn
@@ -99,6 +101,131 @@ def covariances(x: "torch.Tensor", y: "torch.Tensor", remove_mean: bool = True):
     cov_11 = 1 / (batch_size - 1) * torch.matmul(y_t, y)
 
     return cov_00, cov_01, cov_11
+
+
+def matrix_inverse(matrix: torch.Tensor, epsilon: float = 1e-10) -> torch.Tensor:
+    """
+    Calculate the inverse of a square matrix using eigendecomposition.
+
+    This function computes the inverse by:
+    1. Converting the matrix to CPU
+    2. Computing eigenvalues and eigenvectors
+    3. Filtering out small eigenvalues
+    4. Computing inverse using eigendecomposition
+
+    Parameters
+    ----------
+    matrix : torch.Tensor
+        Square matrix to invert
+    epsilon : float, default=1e-10
+        Threshold for eigenvalue filtering
+
+    Returns
+    -------
+    torch.Tensor
+        Inverse of the input matrix
+
+    Raises
+    ------
+    ValueError
+        If matrix is not square or is singular
+    """
+    # Input validation
+    if matrix.shape[0] != matrix.shape[1]:
+        raise ValueError("Matrix must be square")
+
+    # Move matrix to CPU and convert to numpy
+    matrix_cpu = matrix.detach().to('cpu').numpy()
+
+    # Compute eigendecomposition
+    eigenvals, eigenvecs = np.linalg.eigh(matrix_cpu)
+
+    # Filter small eigenvalues
+    valid_indices = eigenvals > epsilon
+    if not np.any(valid_indices):
+        raise ValueError("Matrix is singular or near-singular")
+
+    filtered_vals = eigenvals[valid_indices]
+    filtered_vecs = eigenvecs[:, valid_indices]
+
+    # Compute inverse using eigendecomposition
+    return filtered_vecs @ np.diag(1.0 / filtered_vals) @ filtered_vecs.T
+
+
+def covariances_E(chi_instant: torch.Tensor, chi_lagged: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Calculate instantaneous and time-lagged covariance matrices.
+
+    Computes the inverse of the instantaneous covariance matrix and
+    the time-lagged covariance matrix for VAMP analysis.
+
+    Parameters
+    ----------
+    chi_instant : torch.Tensor
+        Instantaneous data matrix (time t)
+    chi_lagged : torch.Tensor
+        Time-lagged data matrix (time t + τ)
+
+    Returns
+    -------
+    C0_inv : torch.Tensor
+        Inverse of instantaneous covariance matrix
+    C_tau : torch.Tensor
+        Time-lagged covariance matrix
+
+    Notes
+    -----
+    Normalization is performed by dividing by the number of samples.
+    """
+    # Calculate normalization factor
+    n_samples = chi_instant.shape[0]
+    norm_factor = 1.0 / n_samples
+
+    # Compute covariance matrices
+    C0 = norm_factor * chi_instant.T @ chi_instant  # Instantaneous covariance
+    C_tau = norm_factor * chi_instant.T @ chi_lagged  # Time-lagged covariance
+
+    # Compute inverse of instantaneous covariance
+    C0_inv = matrix_inverse(C0)
+
+    return C0_inv, C_tau
+
+
+def _compute_pi(transition_matrix: np.ndarray) -> np.ndarray:
+    """
+    Calculate the stationary distribution of a transition matrix.
+
+    Finds the eigenvector corresponding to eigenvalue 1 (or closest to 1)
+    and normalizes it to obtain the stationary distribution.
+
+    Parameters
+    ----------
+    transition_matrix : np.ndarray
+        Square transition matrix (K) representing state transitions
+
+    Returns
+    -------
+    np.ndarray
+        Normalized stationary distribution vector (π)
+
+    Notes
+    -----
+    The stationary distribution π satisfies π = Kᵀπ, making it the
+    eigenvector of Kᵀ with eigenvalue 1.
+    """
+    # Compute eigendecomposition of transpose
+    eigenvals, eigenvecs = np.linalg.eig(transition_matrix.T)
+
+    # Find index of eigenvalue closest to 1
+    stationary_index = np.argmin((eigenvals - 1.0) ** 2)
+
+    # Extract corresponding eigenvector
+    stationary_dist = eigenvecs[:, stationary_index]
+
+    # Normalize to ensure sum = 1
+    normalized_dist = stationary_dist / np.sum(stationary_dist, keepdims=True)
+
+    return normalized_dist
 
 
 def sym_inverse(mat, epsilon: float = 1e-6, return_sqrt=False, mode='regularize'):
@@ -270,7 +397,7 @@ def vamp_score(data: torch.Tensor,
         return 1 + score
 
     except RuntimeError as e:
-        raise RuntimeError(f"Error computing VAMP score: {str(e)}")
+        raise RuntimeError(f"Error computing VAMP score: {str(e)} | Method {method}")
 
 def vampnet_loss(data: torch.Tensor,
                  data_lagged: torch.Tensor,
@@ -701,7 +828,7 @@ class VAMPNetModel(Transformer, Model):
         return out if len(out) > 1 else out[0]
 
 
-class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin):
+class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin, nn.Module):
     r""" Implementation of VAMPNets. :footcite:`mardt2018vampnets`
     These networks try to find an optimal featurization of data based on a VAMP score :footcite:`wu2020variational`
     by using neural networks as featurizing transforms which are equipped with a loss that is the negative VAMP score.
@@ -745,17 +872,31 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin):
     """
     _MUTABLE_INPUT_DATA = True
 
-    def __init__(self, lobe: "torch.nn.Module", lobe_timelagged: Optional["torch.nn.Module"] = None,
-                 device=None, optimizer: Union[str, Callable] = 'Adam', learning_rate: float = 5e-4,
+    def __init__(self, lobe: "torch.nn.Module",
+                 lobe_timelagged: Optional["torch.nn.Module"] = None,
+                 device=None, optimizer: Union[str, Callable] = 'Adam',
+                 learning_rate: float = 5e-4,
                  activation_vampu: Optional["torch.nn.Module"] = None,
                  activation_vamps: Optional["torch.nn.Module"] = None,
                  num_classes: int = 1,
-                 score_method: str = 'VAMP2', score_mode: str = 'regularize', epsilon: float = 1e-6,
+                 tau: int = 20,
+                 score_method: str = 'VAMP2',
+                 score_mode: str = 'regularize',
+                 epsilon: float = 1e-6,
                  dtype=np.float32):
-        super().__init__()
+
+        # Initialize parent classes
+        EstimatorTransformer.__init__(self)
+        DLEstimatorMixin.__init__(self)
+        nn.Module.__init__(self)
+
+        # Register networks as modules
         self.lobe = lobe
-        self.lobe_timelagged = lobe_timelagged
-        # Set up valid score methods (to extend the deeptime vampnet)
+        self.lobe_timelagged = lobe_timelagged or lobe
+        self.add_module('lobe', self.lobe)
+        self.add_module('lobe_timelagged', self.lobe_timelagged)
+
+        # Set up configuration
         self.valid_score_methods = ('VAMP1', 'VAMP2', 'VAMPE', 'VAMPCE')
         self.score_method = score_method
         self.score_mode = score_mode
@@ -764,25 +905,75 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin):
         self.device = device
         self.learning_rate = learning_rate
         self.dtype = dtype
-        self.setup_optimizer(optimizer, list(self.lobe.parameters()) + list(self.lobe_timelagged.parameters()))
         self._train_scores = []
         self._validation_scores = []
 
-        # Initialize additional attributes
-        self._vampu = VAMPU(units=num_classes, activation=activation_vampu,device=device)
+        # Initialize VAMP networks
+        self._vampu = VAMPU(units=num_classes, activation=activation_vampu, device=device)
         self._vamps = VAMPS(units=num_classes, activation=activation_vamps, device=device)
+        self.add_module('_vampu', self._vampu)
+        self.add_module('_vamps', self._vamps)
+
+        # Initialize caches and state
         self._k_cache = {}
-        self.network_lag = args.tau
-        self._lag = args.tau
+        self.network_lag = tau
+        self._lag = tau
         self._K = None
         self.data = None
-
         self.LAG_EPOCH = 1000
+        self.LAST = -1
+
+        # Setup optimizer based on score method
+        if score_method == "VAMPCE":
+            assert self._vampu is not None and self._vamps is not None, "vampu and vamps module must be defined"
+            all_params = (list(self.lobe.parameters()) +
+                          list(self.lobe_timelagged.parameters()) +
+                          list(self._vampu.parameters()) +
+                          list(self._vamps.parameters()))
+            self.setup_optimizer(optimizer, all_params)
+        else:
+            all_params = (list(self.lobe.parameters()) +
+                          list(self.lobe_timelagged.parameters()))
+            self.setup_optimizer(optimizer, all_params)
+
+        # Use DLEstimatorMixin's method to set up optimizer
+        if isinstance(optimizer, str):
+            optimizer_cls = getattr(torch.optim, optimizer)
+            self._optimizer = optimizer_cls(all_params, lr=learning_rate)
+        else:
+            self._optimizer = optimizer(all_params, lr=learning_rate)
+
+    @property
+    def optimizer(self):
+        return self._optimizer
+
+    def parameters(self, recurse: bool = True):
+        """Return an iterator over module parameters.
+
+        Args:
+            recurse (bool): if True, then yields parameters of this module
+                and all submodules. Otherwise, yields only parameters that
+                are direct members of this module.
+
+        Returns:
+            Iterator over parameters
+        """
+        if self.score_method == "VAMPCE":
+            params = (list(self.lobe.parameters(recurse)) +
+                      list(self.lobe_timelagged.parameters(recurse)) +
+                      list(self._vampu.parameters(recurse)) +
+                      list(self._vamps.parameters(recurse)))
+        else:
+            params = (list(self.lobe.parameters(recurse)) +
+                      list(self.lobe_timelagged.parameters(recurse)))
+
+        for param in params:
+            yield param
 
     @property
     def K(self) -> np.ndarray:
         """The estimated Koopman operator."""
-        if self._K is None or self._reestimated:
+        if self._K is None: # or self._reestimated: MARKER
             self._K = np.ones((1, 1))
 
         return self._K
@@ -948,6 +1139,101 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin):
         self._lobe_timelagged = value
         self._lobe_timelagged = self._lobe_timelagged.to(device=self.device)
 
+    def check_gradients(self):
+        """
+        Check for NaN or infinity values in gradients of all parameters.
+        Raises:
+            ValueError: If any NaN or infinity values are detected in gradients.
+        """
+        gradient_issues = {}
+
+        def check_grad(name, parameter):
+            if parameter.grad is not None:
+                if torch.isnan(parameter.grad).any():
+                    gradient_issues[name] = {'issue': 'NaN', 'location': parameter.grad}
+                if torch.isinf(parameter.grad).any():
+                    gradient_issues[name] = {'issue': 'Inf', 'location': parameter.grad}
+
+        # Check all network components
+        for name, param in self.lobe.named_parameters():
+            check_grad(f'lobe.{name}', param)
+
+        for name, param in self.lobe_timelagged.named_parameters():
+            check_grad(f'lobe_timelagged.{name}', param)
+
+        if self.score_method == "VAMPCE":
+            for name, param in self._vampu.named_parameters():
+                check_grad(f'vampu.{name}', param)
+            for name, param in self._vamps.named_parameters():
+                check_grad(f'vamps.{name}', param)
+
+        if gradient_issues:
+            error_msg = "Gradient issues detected:\n"
+            for name, issue in gradient_issues.items():
+                error_msg += f"Parameter {name}: {issue['issue']} values detected\n"
+            raise ValueError(error_msg)
+
+    def stabilize_training(self, loss_value):
+        """
+        Stabilize training by handling various numerical issues including vanishing gradients.
+        """
+        # 1. Initial loss value checks
+        if torch.isnan(loss_value) or torch.isinf(loss_value):
+            raise ValueError("Loss value is NaN or infinite")
+
+        # 2. Use gradient scaling for mixed precision and stability
+        scaler = torch.amp.GradScaler('cuda') if self.device.type == 'cuda' else None
+
+        try:
+            # 3. Compute backward pass with scaled gradients
+            if scaler:
+                scaler.scale(loss_value).backward()
+            else:
+                loss_value.backward()
+
+            # 4. Check for vanishing gradients
+            grad_norm = 0.0
+            num_params_with_grad = 0
+            for name, param in self.named_parameters():
+                if param.grad is not None:
+                    grad_norm += param.grad.norm().item()
+                    num_params_with_grad += 1
+
+            if num_params_with_grad > 0:
+                avg_grad_norm = grad_norm / num_params_with_grad
+
+                # If gradients are too small, scale them up
+                if avg_grad_norm < 1e-8:
+                    scale_factor = 1e-4 / (avg_grad_norm + 1e-12)
+                    for param in self.parameters():
+                        if param.grad is not None:
+                            param.grad.data.mul_(scale_factor)
+
+            # 5. Gradient clipping to prevent explosion
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+
+            # 6. Optimizer step with scaled gradients
+            if scaler:
+                scaler.step(self.optimizer)
+                scaler.update()
+            else:
+                self.optimizer.step()
+
+            # 7. Learning rate adjustment if gradients are consistently small
+            if hasattr(self, 'grad_history'):
+                self.grad_history.append(avg_grad_norm)
+                if len(self.grad_history) > 10:
+                    self.grad_history.pop(0)
+                    if np.mean(self.grad_history) < 1e-6:
+                        for param_group in self.optimizer.param_groups:
+                            param_group['lr'] *= 1.5
+            else:
+                self.grad_history = [avg_grad_norm]
+
+        except RuntimeError as e:
+            self.optimizer.zero_grad()
+            raise RuntimeError(f"Backward pass failed: {str(e)}")
+
     def partial_fit(self, data, train_score_callback: Callable[[int, "torch.Tensor"], None] = None):
         r""" Performs a partial fit on data. This does not perform any batching.
 
@@ -964,14 +1250,15 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin):
         self : VAMPNet
             Reference to self.
         """
-
+        #self.check_gradients()
         if self.dtype == np.float32:
-            self._lobe = self._lobe.float()
-            self._lobe_timelagged = self._lobe_timelagged.float()
+            self.lobe = self.lobe.float()
+            self.lobe_timelagged = self.lobe_timelagged.float()
         elif self.dtype == np.float64:
-            self._lobe = self._lobe.double()
-            self._lobe_timelagged = self._lobe_timelagged.double()
+            self.lobe = self.lobe.double()
+            self.lobe_timelagged = self.lobe_timelagged.double()
 
+        self.train()
         self.lobe.train()
         self.lobe_timelagged.train()
 
@@ -985,6 +1272,11 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin):
             batch_0 = torch.from_numpy(data[0].astype(self.dtype)).to(device=self.device)
         if isinstance(data[1], np.ndarray):
             batch_t = torch.from_numpy(data[1].astype(self.dtype)).to(device=self.device)
+
+        # Ensure inputs require gradients
+        #batch_0, batch_t = batch_data[0].to(self.device), batch_data[1].to(self.device)
+        batch_0.requires_grad_(True)
+        batch_t.requires_grad_(True)
 
         self.optimizer.zero_grad()
         x_0 = self.lobe(batch_0)
@@ -1002,8 +1294,9 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin):
                                       mode=self.score_mode)
         else:
             loss_value = vampnet_loss(x_0, x_t, method=self.score_method, epsilon=self.epsilon, mode=self.score_mode)
-        loss_value.backward()
-        self.optimizer.step()
+        # Stabilized Optimizer with Grad Scaling to prevent explosion or Vanish
+        self.stabilize_training(loss_value)
+        torch.cuda.synchronize()
 
         if train_score_callback is not None:
             lval_detached = loss_value.detach()
@@ -1029,12 +1322,332 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin):
         with disable_TF32():
             self.lobe.eval()
             self.lobe_timelagged.eval()
+            if self.vamps is not None:
+                self.vamps.eval()
+                self.vampu.eval()
 
             with torch.no_grad():
                 val = self.lobe(validation_data[0])
                 val_t = self.lobe_timelagged(validation_data[1])
-                score_value = vamp_score(val, val_t, method=self.score_method, mode=self.score_mode, epsilon=self.epsilon)
+                if self.score_method == "VAMPCE":
+                    (u_out, v_out, C00_out, C11_out, C01_out, sigma_out, mu_out) = self._vampu([val, val_t])
+                    Ve_out, K_out, p_out, S_out = self._vamps([val, val_t, u_out, v_out,
+                                                               C00_out, C11_out, C01_out, sigma_out])
+                    score_value = vamp_score(Ve_out, Ve_out, method=self.score_method, mode=self.score_mode,
+                                             epsilon=self.epsilon)
+                else:
+                    score_value = vamp_score(val, val_t, method=self.score_method, mode=self.score_mode,
+                                             epsilon=self.epsilon)
                 return score_value
+
+    def update_auxiliary_weights(self, data, optimize_u: bool = True, optimize_S: bool = False,
+                                 reset_weights: bool = True):
+        """
+        Update the weights for the auxiliary VAMP-U and VAMP-S networks.
+
+        Parameters
+        ----------
+        data : tuple
+            Tuple containing (chi_0, chi_t) data tensors
+        optimize_u : bool, default=True
+            Whether to optimize the VAMP-U weights
+        optimize_S : bool, default=False
+            Whether to optimize the VAMP-S weights
+        reset_weights : bool, default=True
+            Currently unused parameter for weight reset functionality
+
+        Returns
+        -------
+        None
+        """
+        # Convert input data to tensors and move to device
+        batch_0, batch_t = data[0], data[1]
+        chi_0 = torch.Tensor(batch_0).to(self.device)
+        chi_t = torch.Tensor(batch_t).to(self.device)
+
+        # Calculate covariance matrices
+        C0inv, Ctau = covariances_E(chi_0, chi_t)
+
+        # Get current VAMP outputs
+        (u_outd, v_outd, C00_outd, C11_outd,
+         C01_outd, sigma_outd, mu_outd) = self._vampu([chi_0, chi_t])
+
+        Ve_out, K_out, p_out, S_out = self._vamps([
+            chi_0, chi_t, u_outd, v_outd, C00_outd,
+            C11_outd, C01_outd, sigma_outd])
+
+        # Calculate Koopman operator
+        K = torch.Tensor(C0inv) @ Ctau.to('cpu')
+        self._K = K_out[0]
+
+        # Update VAMP-U weights if requested
+        if optimize_u:
+            pi = _compute_pi(K)
+            u_kernel = np.log(np.abs(C0inv @ pi))
+            for param in self.vampu.parameters():
+                with torch.no_grad():
+                    param[:] = torch.Tensor(u_kernel)
+
+        # Update VAMP-S weights if requested
+        if optimize_S:
+            (u_out, v_out, C00_out, C11_out,
+             C01_out, sigma, mu_out) = self.vampu([chi_0, chi_t])
+            sigma_inv = matrix_inverse(sigma[0])
+            S_nonrev = K @ sigma_inv
+            S_rev = 0.5 * (S_nonrev + S_nonrev.t())
+            s_kernel = np.log(np.abs(0.5 * S_rev))
+            for param in self.vamps.parameters():
+                with torch.no_grad():
+                    param[:] = torch.Tensor(s_kernel)
+
+    def train_US(self, data: Tuple[torch.Tensor, torch.Tensor],
+                 lr_rate: float = 1e-3,
+                 train_u: bool = True,
+                 out_log: bool = False) -> None:
+        """
+        Train the VAMP-U and VAMP-S networks.
+
+        Parameters
+        ----------
+        data : Tuple[torch.Tensor, torch.Tensor]
+            Tuple of (instantaneous, time-lagged) data
+        lr_rate : float, default=1e-3
+            Learning rate for optimization
+        train_u : bool, default=True
+            Whether to train the VAMP-U network
+        out_log : bool, default=False
+            Whether to print loss values during training
+        """
+        # Add gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+
+        # Monitor gradients
+        for name, param in self.named_parameters():
+            if param.grad is not None:
+                if torch.isnan(param.grad).any():
+                    print(f"NaN gradients detected in {name}")
+        # Freeze main network parameters
+        self.lobe.requires_grad_(False)
+        self.lobe_timelagged.requires_grad_(False)
+
+        # Configure VAMP-U training
+        if train_u:
+            self._vampu.train()
+            self._vampu.requires_grad_(True)
+            self._vampu.u_kernel.retain_grad()
+        else:
+            self._vampu.requires_grad_(False)
+
+        # Configure VAMP-S training
+        self._vamps.train()
+        self._vamps.s_kernel.retain_grad()
+
+        # Prepare data
+        x_0, x_t = data[0], data[1]
+        x_0 = torch.Tensor(x_0).to(self.device)
+        x_t = torch.Tensor(x_t).to(self.device)
+
+        # Forward pass
+        self.optimizer.zero_grad()
+
+        # VAMP-U forward pass
+        u_out, v_out, C00_out, C11_out, C01_out, sigma_out, mu_out = self._vampu([x_0, x_t])
+
+        # VAMP-S forward pass
+        Ve_out, K_out, p_out, S_out = self._vamps([
+            x_0, x_t, u_out, v_out, C00_out,
+            C11_out, C01_out, sigma_out
+        ])
+
+        # Store Koopman operator
+        self._K = K_out[0]
+
+        # Compute and backpropagate loss
+        loss_value = vampnet_loss(Ve_out, Ve_out,
+                                  method=self.score_method,
+                                  epsilon=self.epsilon,
+                                  mode=self.score_mode)
+        loss_value.backward()
+        self.optimizer.step()
+
+        # Optional loss logging
+        if out_log:
+            print(f"Loss: {loss_value.item():.6f}")
+
+        # Restore network states
+        self.lobe.requires_grad_(True)
+        self.lobe_timelagged.requires_grad_(True)
+        self.lobe.train()
+        self.lobe_timelagged.train()
+
+        if not train_u:
+            self._vampu.requires_grad_(True)
+            self._vampu.train()
+
+    def estimate_koopman(self, lag: int) -> np.ndarray:
+        """
+        Estimate the Koopman operator for a given lag time.
+
+        Uses cached results if available to avoid recomputation.
+
+        Parameters
+        ----------
+        lag : int
+            Lag time for the Koopman operator estimation
+
+        Returns
+        -------
+        np.ndarray
+            Estimated Koopman operator matrix for the specified lag time
+        """
+        # Return cached result if available
+        if lag in self._k_cache:
+            return self._k_cache[lag]
+
+        # Update lag time and compute Koopman operator
+        self.lag = lag
+        koopman_op = self._K.detach().cpu().numpy()
+
+        # Cache result for future use
+        self._k_cache[lag] = koopman_op
+
+        return koopman_op
+
+    def estimate_koopman_op(self, trajectories: Union[List[np.ndarray], np.ndarray],
+                            tau: int) -> np.ndarray:
+        """
+        Estimate the Koopman operator from trajectory data.
+
+        Parameters
+        ----------
+        trajectories : Union[List[np.ndarray], np.ndarray]
+            Either a list of trajectories or a single trajectory array
+        tau : int
+            Time lag for the Koopman operator estimation
+
+        Returns
+        -------
+        np.ndarray
+            Estimated Koopman operator matrix
+        """
+        # Process input trajectories
+        if isinstance(trajectories, list):
+            # Concatenate multiple trajectories
+            instant_data = np.concatenate([t[:-tau] for t in trajectories], axis=0)
+            lagged_data = np.concatenate([t[tau:] for t in trajectories], axis=0)
+        else:
+            # Single trajectory
+            instant_data = trajectories[:-tau]
+            lagged_data = trajectories[tau:]
+
+        # Convert to tensors and move to device
+        instant_data = torch.Tensor(instant_data).to(self.device)
+        lagged_data = torch.Tensor(lagged_data).to(self.device)
+
+        # VAMP-U forward pass
+        u_out, v_out, C00_out, C11_out, C01_out, sigma_out, mu_out = self._vampu([
+            instant_data, lagged_data
+        ])
+
+        # VAMP-S forward pass
+        Ve_out, K_out, p_out, S_out = self._vamps([
+            instant_data, lagged_data,
+            u_out, v_out, C00_out, C11_out, C01_out, sigma_out
+        ])
+
+        # Extract and convert Koopman operator to numpy array
+        koopman_op = K_out[0].detach().cpu().numpy()
+
+        return koopman_op
+
+    def its(self, lags: np.ndarray, dt: float = 1.0) -> np.ndarray:
+        """
+        Calculate implied timescales for a sequence of lag times.
+
+        Parameters
+        ----------
+        lags : np.ndarray
+            Array of lag times to analyze
+        dt : float, default=1.0
+            Time step between frames
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (n_output-1, n_lags) containing implied timescales
+            for each lag time and eigenvalue
+        """
+        # Initialize output array (excluding stationary eigenvalue)
+        n_timescales = self.n_output - 1
+        implied_timescales = np.empty((n_timescales, len(lags)))
+
+        # Calculate implied timescales for each lag time
+        for i, lag in enumerate(lags):
+            # Get Koopman operator for current lag
+            koopman_op = self.estimate_koopman(lag)
+
+            # Calculate eigenvalues of real part of Koopman operator
+            eigenvals, _ = np.linalg.eig(np.real(koopman_op))
+
+            # Sort eigenvalues by magnitude and exclude stationary eigenvalue
+            sorted_eigenvals = np.sort(np.abs(eigenvals))[:-1]
+
+            # Calculate implied timescales: -lag*dt/ln(λ)
+            implied_timescales[:, i] = -lag * dt / np.log(sorted_eigenvals)
+
+        # Reset lag time to default
+        self.reset_lag()
+
+        return implied_timescales
+
+    def get_its(self, trajectory: np.ndarray, lags: np.ndarray, dt: float = 1.0) -> np.ndarray:
+        """
+        Calculate implied timescales (ITS) for a sequence of lag times.
+
+        Parameters
+        ----------
+        trajectory : np.ndarray
+            Input trajectory data
+        lags : np.ndarray
+            Array of lag times to analyze
+        dt : float, default=1.0
+            Time step between frames
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (n_output-1, n_lags) containing implied timescales
+            for each lag time and eigenvalue
+        """
+        # Initialize output array (excluding stationary eigenvalue)
+        n_timescales = self.n_output - 1
+        implied_timescales = np.empty((n_timescales, len(lags)))
+
+        # Calculate implied timescales for each lag time
+        for i, lag in enumerate(lags):
+            # Get Koopman operator for current lag
+            koopman_op = self.estimate_koopman_op(trajectory, lag)
+
+            # Calculate and sort eigenvalues
+            eigenvals, _ = np.linalg.eig(np.real(koopman_op))
+            sorted_eigenvals = np.sort(np.abs(np.real(eigenvals)))[:self.LAST]
+
+            # Calculate implied timescales: -lag*dt/ln(λ)
+            implied_timescales[:, i] = -lag * dt / np.log(sorted_eigenvals)
+
+        # Reset lag time to default
+        self.reset_lag()
+
+        return implied_timescales
+
+    def reset_lag(self) -> None:
+        """
+        Reset the model's lag time to its original network lag value.
+
+        This method restores the lag time parameter to the value that was
+        initially set during network configuration.
+        """
+        self.lag = self.network_lag
 
     def fit(self, data_loader: "torch.utils.data.DataLoader", n_epochs=1, validation_loader=None,
             train_score_callback: Callable[[int, "torch.Tensor"], None] = None,
