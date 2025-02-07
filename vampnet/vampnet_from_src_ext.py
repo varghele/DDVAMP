@@ -8,6 +8,7 @@ from deeptime.base import Model, Transformer, EstimatorTransformer
 from deeptime.base_torch import DLEstimatorMixin
 from deeptime.util.torch import map_data, eigh, multi_dot, disable_TF32
 from tqdm import tqdm
+from components.scores import vamp_score
 
 
 def symeig_reg(mat, epsilon: float = 1e-6, mode='regularize', eigenvectors=True) \
@@ -299,7 +300,7 @@ def koopman_matrix(x: "torch.Tensor", y: "torch.Tensor", epsilon: float = 1e-6, 
     ctt_sqrt_inv = sym_inverse(ctt, return_sqrt=True, epsilon=epsilon, mode=mode)
     return multi_dot([c00_sqrt_inv, c0t, ctt_sqrt_inv]).t()
 
-def vamp_score(data: torch.Tensor,
+def vamp_score_new(data: torch.Tensor,
                data_lagged: torch.Tensor,
                method: str = 'VAMP2',
                epsilon: float = 1e-6,
@@ -1201,9 +1202,47 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin, nn.Module):
         """
         Stabilize training by handling various numerical issues including vanishing gradients.
         """
-        # 1. Initial loss value checks
-        if torch.isnan(loss_value) or torch.isinf(loss_value):
-            raise ValueError("Loss value is NaN or infinite")
+        diagnostic_info = {
+            'loss_value': loss_value.item(),
+            'u_out_stats': None,
+            's_out_stats': None
+        }
+        # 1. Detailed loss value checks
+        if torch.isnan(loss_value):
+            raise ValueError(f"Loss value is NaN: {loss_value}")
+        elif torch.isinf(loss_value):
+            # Get the last layer outputs for diagnosis
+            try:
+                # Get VAMPU output stats if available
+                if hasattr(self._vampu, 'last_output') and self._vampu.last_output is not None:
+                    u_out = self._vampu.last_output
+                    diagnostic_info['u_out_stats'] = {
+                        'min': u_out.min().item(),
+                        'max': u_out.max().item(),
+                        'mean': u_out.mean().item(),
+                        'has_nan': torch.isnan(u_out).any().item(),
+                        'has_inf': torch.isinf(u_out).any().item()
+                    }
+
+                # Get VAMPS output stats if available
+                if hasattr(self._vamps, 'last_output') and self._vamps.last_output is not None:
+                    s_out = self._vamps.last_output
+                    diagnostic_info['s_out_stats'] = {
+                        'min': s_out.min().item(),
+                        'max': s_out.max().item(),
+                        'mean': s_out.mean().item(),
+                        'has_nan': torch.isnan(s_out).any().item(),
+                        'has_inf': torch.isinf(s_out).any().item()
+                    }
+            except:
+                diagnostic_info = {'loss_value': loss_value.item()}
+
+            raise ValueError(
+                f"Loss value is infinite: {loss_value} "
+                f"(positive infinite: {torch.isposinf(loss_value)}, "
+                f"negative infinite: {torch.isneginf(loss_value)})\n"
+                f"Diagnostic information:\n{diagnostic_info}"
+            )
 
         # 2. Use gradient scaling for mixed precision and stability
         scaler = torch.amp.GradScaler('cuda') if self.device.type == 'cuda' else None
@@ -1256,7 +1295,7 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin, nn.Module):
 
         except RuntimeError as e:
             self.optimizer.zero_grad()
-            raise RuntimeError(f"Backward pass failed: {str(e)}")
+            raise RuntimeError(f"Backward pass failed with diagnostic info:\n{diagnostic_info}\nError: {str(e)}")
 
     def partial_fit(self, data, train_score_callback: Callable[[int, "torch.Tensor"], None] = None):
         r""" Performs a partial fit on data. This does not perform any batching.
@@ -1729,11 +1768,22 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin, nn.Module):
         return self
 
     def fetch_model(self) -> VAMPNetModel:
-        r""" Yields the current model. """
+        r""" Yields the current model with training scores. """
         from copy import deepcopy
         lobe = deepcopy(self.lobe)
         if self.lobe == self.lobe_timelagged:
             lobe_timelagged = lobe
         else:
             lobe_timelagged = deepcopy(self.lobe_timelagged)
-        return VAMPNetModel(lobe, lobe_timelagged, dtype=self.dtype, device=self.device)
+
+        model = VAMPNetModel(lobe, lobe_timelagged, dtype=self.dtype, device=self.device)
+
+        # Copy train scores if they exist
+        if hasattr(self, 'train_scores'):
+            model._train_scores = deepcopy(self.train_scores)
+
+        # Copy train scores if they exist
+        if hasattr(self, 'validation_scores'):
+            model._validation_scores = deepcopy(self.validation_scores)
+
+        return model

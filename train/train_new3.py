@@ -254,7 +254,7 @@ class RevVAMPTrainer:
             self.log_pth
         )
 
-        self.vampnet.set_optimizer_lr(0.2)
+        self.vampnet.set_optimizer_lr(0.001)
 
     def train_vamp(self) -> Tuple[RevVAMPNet, int]:
         """Train the VAMPNet model with optional VAMPCE pre-training."""
@@ -409,10 +409,10 @@ class RevVAMPTrainer:
     def save_training_metrics(self, model):
         """Save training and validation scores."""
         with open(f'{self.args.save_folder}/train_scores.npy', 'wb') as f:
-            np.save(f, model.train_scores)
+            np.save(f, model._train_scores)
 
         with open(f'{self.args.save_folder}/validation_scores.npy', 'wb') as f:
-            np.save(f, model.validation_scores)
+            np.save(f, model._validation_scores)
 
     def train(self):
         """Execute the complete training pipeline."""

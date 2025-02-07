@@ -36,6 +36,24 @@ def vamp_score(data: torch.Tensor,
     - VAMPE: Eigendecomposition-based score
     - VAMPCE: Custom scoring for VAMP with cross-entropy
     """
+    # Add diagnostic logging
+    diagnostic_info = {
+        'data_stats': {
+            'min': data.min().item(),
+            'max': data.max().item(),
+            'mean': data.mean().item(),
+            'has_nan': torch.isnan(data).any().item(),
+            'has_inf': torch.isinf(data).any().item()
+        },
+        'data_lagged_stats': {
+            'min': data_lagged.min().item(),
+            'max': data_lagged.max().item(),
+            'mean': data_lagged.mean().item(),
+            'has_nan': torch.isnan(data_lagged).any().item(),
+            'has_inf': torch.isinf(data_lagged).any().item()
+        }
+    }
+
     # Validate inputs
     valid_methods = ['VAMP1', 'VAMP2', 'VAMPE', 'VAMPCE']
     valid_modes = ['trunc', 'regularize']
@@ -54,17 +72,26 @@ def vamp_score(data: torch.Tensor,
 
     try:
         # Compute score based on method
-        if method == 'VAMP1':
+        if method in ['VAMP1', 'VAMP2']:
             koopman = koopman_matrix(data, data_lagged, epsilon=epsilon, mode=mode)
-            score = torch.norm(koopman, p='nuc')
+            diagnostic_info['koopman_stats'] = {
+                'min': koopman.min().item(),
+                'max': koopman.max().item(),
+                'mean': koopman.mean().item(),
+                'has_nan': torch.isnan(koopman).any().item(),
+                'has_inf': torch.isinf(koopman).any().item()
+            }
 
-        elif method == 'VAMP2':
-            koopman = koopman_matrix(data, data_lagged, epsilon=epsilon, mode=mode)
-            score = torch.pow(torch.norm(koopman, p='fro'), 2)
+            score = torch.norm(koopman, p='nuc') if method == 'VAMP1' else torch.pow(torch.norm(koopman, p='fro'), 2)
 
         elif method == 'VAMPE':
-            # Compute covariances
+            # Compute Covariance
             c00, c0t, ctt = covariances(data, data_lagged, remove_mean=True)
+            diagnostic_info['covariance_stats'] = {
+                'c00': {'min': c00.min().item(), 'max': c00.max().item()},
+                'c0t': {'min': c0t.min().item(), 'max': c0t.max().item()},
+                'ctt': {'min': ctt.min().item(), 'max': ctt.max().item()}
+            }
 
             # Compute inverse square roots
             c00_sqrt_inv = sym_inverse(c00, epsilon=epsilon, return_sqrt=True, mode=mode)
@@ -97,7 +124,12 @@ def vamp_score(data: torch.Tensor,
         else:
             raise ValueError(f"Method {method} not implemented")
 
-        return 1 + score
+        final_score = 1 + score
 
-    except RuntimeError as e:
-        raise RuntimeError(f"Error computing VAMP score: {str(e)}")
+        if torch.isinf(final_score):
+            raise ValueError(f"Infinite score detected. Diagnostic information:\n{diagnostic_info}")
+
+        return final_score
+
+    except Exception as e:
+        raise RuntimeError(f"Error in VAMP score computation: {str(e)}\nDiagnostic information:\n{diagnostic_info}")

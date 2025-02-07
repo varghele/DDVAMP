@@ -111,8 +111,12 @@ class CFConv(nn.Module):
 
         # Generate continuous filters from RBF expansion
         # Filter has size [n_frames, n_atoms, n_neighbors, n_features]
-        conv_filter = self.filter_generator(rbf_expansion.to(torch.float32))
-        conv_filter = conv_filter.to(device)
+        #conv_filter = self.filter_generator(rbf_expansion.to(torch.float32))
+        #conv_filter = conv_filter.to(device) #TODO: this is the old version! Mybe re-enable it
+
+        rbf_norm = rbf_expansion / (rbf_expansion.norm(dim=-1, keepdim=True) + 1e-8)
+        conv_filter = self.filter_generator(rbf_norm.to(torch.float32))
+        conv_filter=conv_filter.to(device)
 
         # Ensure neighbor_list is int64 and properly shaped for gathering
         neighbor_list = neighbor_list.to(torch.int64)

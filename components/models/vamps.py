@@ -45,6 +45,8 @@ class VAMPS(nn.Module):
         ) # S_var
         self._init_weight = None
 
+        self.last_output = None
+
     @property
     def s_kernel(self) -> nn.Parameter:
         """
@@ -143,4 +145,7 @@ class VAMPS(nn.Module):
         K_tile = torch.tile(torch.unsqueeze(K, dim=0), [n_batch, 1, 1])
         S_tile = torch.tile(torch.unsqueeze(S, dim=0), [n_batch, 1, 1])
 
-        return [vamp_e_tile, K_tile, probs, S_tile]
+        out = [vamp_e_tile, K_tile, probs, S_tile]
+        self.last_output = out
+
+        return out

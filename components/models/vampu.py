@@ -36,6 +36,9 @@ class VAMPU(nn.Module):
             requires_grad=True
         ) # u_var
 
+        # Save last output for analysis
+        self.last_output = None
+
     @property
     def u_kernel(self) -> nn.Parameter:
         """
@@ -130,10 +133,14 @@ class VAMPU(nn.Module):
         C11 = norm * torch.matmul(gamma_t, gamma)
         C01 = norm * torch.matmul(chi_t_t, gamma)
 
-        # Return all computed quantities
-        return [
+        out = [
             self._tile(var, n_batch) for var in (u, v, C00, C11, C01, sigma)
         ] + [mu]
+
+        self.last_output = out
+
+        # Return all computed quantities
+        return out
 
     def reset_weights(self):
         """Reset the u_kernel weights to initial values."""
