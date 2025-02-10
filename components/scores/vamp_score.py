@@ -120,6 +120,9 @@ def vamp_score(data: torch.Tensor,
 
         elif method == 'VAMPCE':
             score = torch.trace(data[0])
+            #TODO maybe return the negative here
+            score = -1.0 * score
+            return score
 
         else:
             raise ValueError(f"Method {method} not implemented")
