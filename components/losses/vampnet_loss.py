@@ -1,6 +1,7 @@
 import torch
 from components.scores.vamp_score import vamp_score
 
+
 def vampnet_loss(data: torch.Tensor,
                  data_lagged: torch.Tensor,
                  method: str = 'VAMP2',
