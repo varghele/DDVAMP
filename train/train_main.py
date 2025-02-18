@@ -10,14 +10,12 @@ from utils.count_parameters import count_parameters
 from deeptime.util.data import TrajectoryDataset
 from components.models.GraphVAMPNet import GraphVampNet
 from components.models.RevVAMPNet import RevVAMPNet
-#from components.models.RevVAMPNet import RevVAMPNet
 from train.utils.EarlyStopping import EarlyStopping
 from tqdm import tqdm
 from typing import Optional, Tuple
 from components.models.vamps import VAMPS
 from components.models.vampu import VAMPU
 import numpy as np
-#from vampnet.vampnet_from_src_ext import *
 import random
 
 # Removing stochasticity, setting seed so training is always the same
