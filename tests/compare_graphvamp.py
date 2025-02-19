@@ -50,7 +50,7 @@ def test_graph_vamp_net_comparison():
 
     try:
         # Set up command line arguments first
-        from args.args import buildParser
+        from args.training_args import buildParser
         parser = buildParser()
         # Parse with empty list to avoid reading actual command line args
         args = parser.parse_args([])

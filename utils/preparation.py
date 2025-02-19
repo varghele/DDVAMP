@@ -2,174 +2,199 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import pyemma as pe
-from typing import List, Tuple, Union, Optional, Dict
-from dataclasses import dataclass
+import mdtraj as md
+from typing import List, Tuple, Union, Dict
 from glob import glob
 import os
 
 
-@dataclass
-class TrajectoryConfig:
-    """Configuration class for trajectory processing"""
-    num_neighbors: int = 5
-    stride: int = 5
-    chunk_size: int = 5000
-    device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
-    num_atoms: int = 42
-    output_dir: str = "../intermediate"
-
-
 class TrajectoryProcessor:
-    def __init__(self, config: TrajectoryConfig):
-        self.config = config
-        print(f"Using device: {self.config.device}")
+    def __init__(self, args):
+        self.args = args
+        self.num_residues = None
+        self.data = None
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Using device: {self.device}")
 
-    def load_trajectories(self,
-                          sim_names: List[str],
-                          traj_pattern: str,
-                          top_pattern: str) -> Dict:
-        """
-        Load trajectory files using PyEMMA
-
-        Args:
-            sim_names: List of simulation names
-            traj_pattern: Pattern for trajectory files
-            top_pattern: Pattern for topology files
-
-        Returns:
-            Dictionary containing trajectory data
-        """
-        trajs = {k: sorted(glob(traj_pattern.format(k))) for k in sim_names}
-        top = {k: top_pattern.format(k) for k in sim_names}
-
-        residue_name, pair_list, inpcon = {}, {}, {}
-
-        for k in sim_names:
-            residue = {}
-            pair = []
-            feat = pe.coordinates.featurizer(top[k])
-            feat.add_residue_mindist()
-
-            for key in feat.describe():
-                name = key.split(' ')
-                ri, rj = name[2], name[4]
-                i, j = int(ri[3:]), int(rj[3:])
-                residue[i] = ri
-                residue[j] = rj
-                pair.append((i, j))
-
-            residue_name[k] = residue
-            pair_list[k] = pair
-            inpcon[k] = pe.coordinates.source(trajs[k], feat)
-
-        return {'residue_name': residue_name,
-                'pair_list': pair_list,
-                'inpcon': inpcon}
-
-    def get_neighbors(self,
-                      all_coords: Union[List[np.ndarray], np.ndarray],
-                      pair_list: List[Tuple[int, int]]) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Calculate nearest neighbors using distance matrix
-        """
-        if isinstance(all_coords, list):
-            return self._process_list_trajectories(all_coords, pair_list)
+    def prepare_topology(self) -> str:
+        """Convert topology to PDB if needed and count residues"""
+        if self.args.topology.endswith('.pdb'):
+            pdb_file = self.args.topology
+        elif self.args.topology.endswith('.gro'):
+            pdb_file = self.args.topology.replace('.gro', '.pdb')
+            if not os.path.exists(pdb_file):
+                try:
+                    traj = md.load(self.args.topology)
+                    traj.save_pdb(pdb_file)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to convert GRO to PDB: {str(e)}")
         else:
-            return self._process_single_trajectory(all_coords, pair_list)
+            raise ValueError("Topology file must be either .pdb or .gro")
 
-    def _process_list_trajectories(self, coords_list, pair_list):
-        all_dists, all_inds = [], []
-        for coords in coords_list:
-            dists, inds = self._process_single_trajectory(coords, pair_list)
-            all_dists.append(dists)
-            all_inds.append(inds)
-        return np.array(all_dists), np.array(all_inds)
+        structure = md.load(pdb_file)
+        self.num_residues = structure.topology.n_residues
+        print(f"Number of residues detected: {self.num_residues}")
+        return pdb_file
+
+    def load_trajectories(self) -> Dict:
+        """Load and process trajectory files"""
+        pdb_file = self.prepare_topology()
+
+        # Check if trajectory folder exists
+        if not os.path.exists(self.args.traj_folder):
+            raise ValueError(f"Trajectory folder not found: {self.args.traj_folder}")
+
+        traj_pattern = os.path.join(self.args.traj_folder, "r?", "traj*")
+        traj_files = sorted(glob(traj_pattern))
+
+        if not traj_files:
+            raise ValueError(f"No trajectory files found matching pattern: {traj_pattern}")
+
+        k = self.args.protein_name
+        residue, pair = self._process_single_simulation(k, pdb_file, traj_files)
+        inpcon = self._load_trajectory(traj_files, pdb_file)
+
+        self.data = {
+            'residue_name': {k: residue},
+            'pair_list': {k: pair},
+            'inpcon': {k: inpcon}
+        }
+        return self.data
+
+    def _process_single_simulation(self, sim_name: str, pdb_file: str, traj_files: List[str]) -> Tuple[Dict, List]:
+        """Process a single simulation"""
+        residue = {}
+        pair = []
+        feat = pe.coordinates.featurizer(pdb_file)
+        feat.add_residue_mindist()
+
+        for key in feat.describe():
+            name = key.split(' ')
+            if len(name) >= 5:  # Ensure we have enough elements
+                ri, rj = name[2], name[4]
+                try:
+                    i, j = int(ri[3:]), int(rj[3:])
+                    residue[i] = ri
+                    residue[j] = rj
+                    pair.append((i, j))
+                except (ValueError, IndexError) as e:
+                    print(f"Warning: Skipping invalid residue pair in {key}: {str(e)}")
+
+        return residue, pair
+
+    def _load_trajectory(self, traj_files: List[str], pdb_file: str):
+        """Load trajectory files"""
+        valid_trajs = [f for f in traj_files if f.endswith(('.xtc', '.trr', '.dcd', '.nc', '.h5'))]
+        if not valid_trajs:
+            raise ValueError("No valid trajectory files found")
+
+        feat = pe.coordinates.featurizer(pdb_file)
+        feat.add_residue_mindist()
+        return pe.coordinates.source(valid_trajs, feat)
+
+    def get_neighbors(self, coords: Union[List[np.ndarray], np.ndarray], pair_list: List[Tuple[int, int]]) -> Tuple[
+        np.ndarray, np.ndarray]:
+        """Calculate nearest neighbors"""
+        if isinstance(coords, (list, tuple)):
+            return self._process_list_trajectories(coords, pair_list)
+        return self._process_single_trajectory(coords, pair_list)
 
     def _process_single_trajectory(self, coords, pair_list):
-        dists, inds = [], []
-        for frame in tqdm(coords):
-            mut_dist = np.ones((self.config.num_atoms, self.config.num_atoms)) * 300.0
+        """Process a single trajectory with correct shape and distance handling"""
+        n_frames = len(coords)
+        n_residues = self.num_residues
+        n_neighbors = self.args.num_neighbors
 
+        # Initialize arrays with correct shape
+        dists = []
+        inds = []
+
+        for frame in tqdm(coords, desc="Processing frames"):
+            # Initialize distance matrix with large values (like reference)
+            mut_dist = np.ones((n_residues, n_residues)) * 100.0  # Changed from 300.0 to 100.0
+
+            # Fill the distance matrix (note the -1 in indices like reference)
             for idx, d in enumerate(frame):
+                if idx >= len(pair_list):
+                    break
                 res_i, res_j = pair_list[idx]
-                mut_dist[res_i][res_j] = d
-                mut_dist[res_j][res_i] = d
+                mut_dist[res_i - 1][res_j - 1] = d  # Added -1 to match reference
+                mut_dist[res_j - 1][res_i - 1] = d  # Added -1 to match reference
 
-            frame_dists, frame_inds = [], []
+            frame_dists = []
+            frame_inds = []
+
+            # Process each residue
             for dd in mut_dist:
                 states_order = np.argsort(dd)
-                neighbors = states_order[:self.config.num_neighbors]
-                frame_dists.append(dd[neighbors])
-                frame_inds.append(neighbors)
+                neighbors = states_order[:n_neighbors]
+                frame_dists.append(list(dd[neighbors]))  # Convert to list like reference
+                frame_inds.append(list(neighbors))  # Convert to list like reference
 
             dists.append(frame_dists)
             inds.append(frame_inds)
 
         return np.array(dists), np.array(inds)
 
-    def process_and_save(self, sim_names: List[str], data: Dict):
+    def _process_list_trajectories(self, coords_list, pair_list):
+        """Process a list of trajectories"""
+        all_dists, all_inds = [], []
+        for coords in coords_list:
+            dists, inds = self._process_single_trajectory(coords, pair_list)
+            all_dists.append(dists)
+            all_inds.append(inds)
+        return np.concatenate(all_dists), np.concatenate(all_inds)
+
+    def process_and_save(self):
         """Process trajectories and save results"""
-        for k in sim_names:
-            lengths = [data['inpcon'][k].trajectory_lengths()]
-            nframes = data['inpcon'][k].trajectory_lengths().sum()
+        k = self.args.protein_name
 
-            mindist_file = f"{self.config.output_dir}/mindist-780-{k}.npy"
-            if not os.path.exists(mindist_file):
-                print(f"Computing mindist for {k}...")
-                con = np.vstack(data['inpcon'][k].get_output())
-                np.save(mindist_file, con)
+        try:
+            # Get trajectory information
+            lengths = [self.data['inpcon'][k].trajectory_lengths()]
+            nframes = self.data['inpcon'][k].trajectory_lengths().sum()
 
-            ns = int(self.config.stride * 0.2)
-            output_prefix = f"{self.config.output_dir}/{k}_{self.config.num_neighbors}nbrs_{ns}ns_"
+            # Process coordinates
+            coords = self.data['inpcon'][k].get_output()
+            dists, inds = self.get_neighbors(coords, self.data['pair_list'][k])
 
-            dists, inds = self.get_neighbors(data[k], data['pair_list'][k])
+            # Prepare output path
+            ns = int(self.args.stride * 0.2)
+            output_prefix = os.path.join(self.args.interim_dir, f"{k}_{self.args.num_neighbors}nbrs_{ns}ns_")
 
+            # Save results
+            os.makedirs(self.args.interim_dir, exist_ok=True)
+
+            # Save data info
             data_info = {'length': lengths, '_nframes': nframes}
             np.save(f"{output_prefix}datainfo_min.npy", data_info)
-            np.save(f"{output_prefix}dist_min.npy", np.vstack(dists))
-            np.save(f"{output_prefix}inds_min.npy", np.vstack(inds))
 
-    def chunks(self, data: Union[List[np.ndarray], np.ndarray]):
-        """Split trajectory into chunks"""
-        if isinstance(data, list):
-            for data_tmp in data:
-                yield from self._chunk_single_trajectory(data_tmp)
-        else:
-            yield from self._chunk_single_trajectory(data)
+            # Save distances and indices without vstack
+            np.save(f"{output_prefix}dist_min.npy", dists)  # Remove vstack
+            np.save(f"{output_prefix}inds_min.npy", inds)  # Remove vstack
 
-    def _chunk_single_trajectory(self, data: np.ndarray):
-        for j in range(0, len(data), self.config.chunk_size):
-            chunk = data[j:j + self.config.chunk_size, ...]
-            print(f"Chunk shape: {chunk.shape}")
-            yield chunk
+            print(f"Results saved in: {self.args.interim_dir}")
+
+        except Exception as e:
+            print(f"Error during processing and saving: {str(e)}")
+            raise
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--num-neighbors', type=int, default=5)
-    parser.add_argument('--stride', type=int, default=5)
-    parser.add_argument('--traj-folder', type=str, required=True)
-    parser.add_argument('--num-atoms', type=int, default=42)
-    parser.add_argument('--output-dir', type=str, default="../intermediate")
+def run_pipeline(args) -> Dict:
+    """Main function to run the preparation pipeline"""
+    # Get the project root directory (one level up from pipe_tests)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    args = parser.parse_args()
+    # Set interim_dir relative to project root
+    if not hasattr(args, 'interim_dir'):
+        args.interim_dir = os.path.join(project_root, 'data', args.protein_name, 'interim')
 
-    config = TrajectoryConfig(
-        num_neighbors=args.num_neighbors,
-        stride=args.stride,
-        num_atoms=args.num_atoms,
-        output_dir=args.output_dir
-    )
+    # Create directories if they don't exist
+    os.makedirs(args.interim_dir, exist_ok=True)
 
-    processor = TrajectoryProcessor(config)
-
-    sim_names = ("red",)
-    traj_pattern = f"{args.traj_folder}/{{0}}/r?/traj*.xtc"
-    top_pattern = f"{args.traj_folder}/{{0}}/topol.gro"
-
-    data = processor.load_trajectories(sim_names, traj_pattern, top_pattern)
-    processor.process_and_save(sim_names, data)
+    processor = TrajectoryProcessor(args)
+    processor.load_trajectories()
+    processor.process_and_save()
+    return processor.data
 
 
-if __name__ == "__main__":
-    main()

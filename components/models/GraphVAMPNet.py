@@ -5,7 +5,7 @@ from typing import Optional, Tuple, Union
 from components.layers.gat import PyGGAT
 from components.layers.gcn_interaction import GCNInteraction
 from components.distances.gaussian import GaussianDistance
-from args.args import buildParser
+from args.training_args import buildParser
 
 
 class GraphVampNet(nn.Module):

@@ -17,6 +17,7 @@ from components.models.vamps import VAMPS
 from components.models.vampu import VAMPU
 import numpy as np
 import random
+from components.activations.ExpActivation import ExpActivation
 
 # Removing stochasticity, setting seed so training is always the same
 torch.backends.cudnn.deterministic = True
@@ -40,11 +41,6 @@ def flush_cuda_cache():
 
 def record_result(arg1, arg2):
     pass
-
-class ExpActivation(nn.Module):
-    """Exponential activation function as a proper nn.Module."""
-    def forward(self, x):
-        return torch.exp(x)
 
 class RevVAMPTrainer:
     def __init__(self, args):
@@ -416,6 +412,16 @@ class RevVAMPTrainer:
         print("Model training completed")
         return model, all_train_epoch
 
+# For pipeline
+def run_training(args):
+    """Entry point for pipeline integration"""
+    flush_cuda_cache()
+    trainer = RevVAMPTrainer(args)
+    model, all_train_epoch = trainer.train()
+    return {
+        'model': model,
+        'epochs_trained': all_train_epoch
+    }
 
 def main():
     args = buildParser().parse_args()
