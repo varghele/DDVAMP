@@ -18,9 +18,8 @@ from components.models.vampu import VAMPU
 import numpy as np
 import random
 from components.activations.ExpActivation import ExpActivation
+import matplotlib.pyplot as plt
 
-from datetime import datetime
-import uuid
 
 # Removing stochasticity, setting seed so training is always the same
 #torch.backends.cudnn.deterministic = True
@@ -65,6 +64,8 @@ class RevVAMPTrainer:
         # Initialize model
         self.lobe, self.vampnet, self.vlu, self.vls = self._initialize_model()
 
+        self.all_train_epoch = 0
+
     def _setup_device(self):
         """Set up and return the appropriate device (CPU/CUDA)."""
         if torch.cuda.is_available():
@@ -78,6 +79,13 @@ class RevVAMPTrainer:
     def setup_directories(self):
         """Set up logging path."""
         self.log_pth = os.path.join(self.args.save_folder, 'training.log')
+
+        # Save arguments as text
+        args_file = os.path.join(self.args.save_folder, 'meta.txt')
+        with open(args_file, 'w') as f:
+            f.write(str(self.args))
+            f.write("\n\nInferred parameters:\n")
+            f.write(str(self.inferred_params))
 
     def _infer_params_from_path(self, data_path):
         """Infer parameters from the data directory path."""
@@ -440,10 +448,20 @@ class RevVAMPTrainer:
         with open(os.path.join(self.args.save_folder, 'validation_scores.npy'), 'wb') as f:
             np.save(f, model._validation_scores)
 
+            # Create visualization
+            plt.figure()
+            plt.loglog(*model._train_scores[-self.all_train_epoch:].T, label='training')
+            plt.loglog(*model._validation_scores.T, label='validation')
+            plt.xlabel('step')
+            plt.ylabel('score')
+            plt.legend()
+            plt.savefig(os.path.join(self.args.save_folder, 'scores.png'))
+
     def train(self):
         """Execute the complete training pipeline."""
         print("Starting model training...")
         model, all_train_epoch = self.train_vamp()
+        self.all_train_epoch = all_train_epoch
         self.save_training_metrics(model)
         print("Model training completed")
         return model, all_train_epoch
