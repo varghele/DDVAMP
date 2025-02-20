@@ -19,12 +19,15 @@ import numpy as np
 import random
 from components.activations.ExpActivation import ExpActivation
 
+from datetime import datetime
+import uuid
+
 # Removing stochasticity, setting seed so training is always the same
-torch.backends.cudnn.deterministic = True
-random.seed(hash("setting random seeds") % 2**32 - 1)
-np.random.seed(hash("improves reproducibility") % 2**32 - 1)
-torch.manual_seed(hash("by removing stochasticity") % 2**32 - 1)
-torch.cuda.manual_seed_all(hash("so runs are repeatable") % 2**32 - 1)
+#torch.backends.cudnn.deterministic = True
+#random.seed(hash("setting random seeds") % 2**32 - 1)
+#np.random.seed(hash("improves reproducibility") % 2**32 - 1)
+#torch.manual_seed(hash("by removing stochasticity") % 2**32 - 1)
+#torch.cuda.manual_seed_all(hash("so runs are repeatable") % 2**32 - 1)
 
 
 def flush_cuda_cache():
@@ -46,10 +49,15 @@ class RevVAMPTrainer:
     def __init__(self, args):
         self.args = args
         self.device = self._setup_device()
+
+        # Get project root
+        self.project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        # Infer parameters from input directory path
+        self.inferred_params = self._infer_params_from_path(args.data_path)
         self.setup_directories()
 
         # Initialize data
-        self.file_path = '../datasets/traj_revgraphvamp_org/intermediate/'
         self.traj_length, self.dists1, self.inds1 = self._load_data()
         self.dataset = self._prepare_dataset()
         self.loader_train, self.loader_val, self.loader_train_all = self._create_dataloaders()
@@ -68,22 +76,50 @@ class RevVAMPTrainer:
         return device
 
     def setup_directories(self):
-        """Create save directories and log arguments."""
-        self.log_pth = f'{self.args.save_folder}/training.log'
-        if not os.path.exists(self.args.save_folder):
-            print('Creating folder for saving checkpoints...')
-            os.makedirs(self.args.save_folder)
+        """Set up logging path."""
+        self.log_pth = os.path.join(self.args.save_folder, 'training.log')
 
-        with open(f'{self.args.save_folder}/args.txt', 'w') as f:
-            f.write(str(self.args))
+    def _infer_params_from_path(self, data_path):
+        """Infer parameters from the data directory path."""
+        # Expected format: data/proteinname/interim/proteinname_numbernbrs_numberns/
+        try:
+            dir_name = os.path.basename(os.path.normpath(data_path))
+            parts = dir_name.split('_')
+
+            params = {
+                'protein_name': parts[0],
+                'num_neighbors': int(parts[1].replace('nbrs', '')),
+                'ns': int(parts[2].replace('ns', ''))
+            }
+
+            print(f"Inferred parameters from path:")
+            print(f"Protein name: {params['protein_name']}")
+            print(f"Number of neighbors: {params['num_neighbors']}")
+            print(f"Nanoseconds: {params['ns']}")
+
+            return params
+
+        except Exception as e:
+            raise ValueError(f"Failed to infer parameters from path: {data_path}. "
+                             f"Expected format: data/proteinname/interim/proteinname_numbernbrs_numberns/")
 
     def _load_data(self):
         """Load and prepare data from files."""
-        data_info = np.load(f"{self.file_path}red_5nbrs_1ns_datainfo_min.npy", allow_pickle=True).item()
-        traj_length = data_info['length']
-        dists1 = np.load(f"{self.file_path}red_5nbrs_1ns_dist_min.npy")
-        inds1 = np.load(f"{self.file_path}red_5nbrs_1ns_inds_min.npy")
-        return traj_length, dists1, inds1
+        try:
+            # Load data from the inferred directory
+            dist_file = os.path.join(self.args.data_path, "dist_min.npy")
+            inds_file = os.path.join(self.args.data_path, "inds_min.npy")
+
+            dists1 = np.load(dist_file)
+            inds1 = np.load(inds_file)
+
+            # Infer trajectory length from data shape
+            traj_length = [dists1.shape[0]]
+
+            return traj_length, dists1, inds1
+
+        except Exception as e:
+            raise ValueError(f"Failed to load data files from {self.args.data_path}: {str(e)}")
 
     def _prepare_dataset(self):
         """Prepare dataset from distance and index data."""
@@ -398,10 +434,10 @@ class RevVAMPTrainer:
 
     def save_training_metrics(self, model):
         """Save training and validation scores."""
-        with open(f'{self.args.save_folder}/train_scores.npy', 'wb') as f:
+        with open(os.path.join(self.args.save_folder, 'train_scores.npy'), 'wb') as f:
             np.save(f, model._train_scores)
 
-        with open(f'{self.args.save_folder}/validation_scores.npy', 'wb') as f:
+        with open(os.path.join(self.args.save_folder, 'validation_scores.npy'), 'wb') as f:
             np.save(f, model._validation_scores)
 
     def train(self):

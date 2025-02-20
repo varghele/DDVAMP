@@ -54,9 +54,19 @@ def main():
     # Run preparation
     results = run_pipeline(args)
 
+    # Get the output directory from results
+    ns = int(args.stride * 0.2)
+    subdir_name = f"{args.protein_name}_{args.num_neighbors}nbrs_{ns}ns"
+    output_dir = os.path.join(args.interim_dir, subdir_name)
+
     print("\nPreparation completed successfully!")
-    print(f"Results saved in: {args.interim_dir}")
+    print(f"Results saved in: {output_dir}")
+    print(f"Files created:")
+    print(f"- {os.path.join(output_dir, 'datainfo_min.npy')}")
+    print(f"- {os.path.join(output_dir, 'dist_min.npy')}")
+    print(f"- {os.path.join(output_dir, 'inds_min.npy')}")
 
 
 if __name__ == "__main__":
     main()
+

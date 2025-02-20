@@ -158,20 +158,19 @@ class TrajectoryProcessor:
             coords = self.data['inpcon'][k].get_output()
             dists, inds = self.get_neighbors(coords, self.data['pair_list'][k])
 
-            # Prepare output path
+            # Create subdirectory name based on parameters
             ns = int(self.args.stride * 0.2)
-            output_prefix = os.path.join(self.args.interim_dir, f"{k}_{self.args.num_neighbors}nbrs_{ns}ns_")
+            subdir_name = f"{k}_{self.args.num_neighbors}nbrs_{ns}ns"
+            output_dir = os.path.join(self.args.interim_dir, subdir_name)
 
-            # Save results
-            os.makedirs(self.args.interim_dir, exist_ok=True)
+            # Create subdirectory
+            os.makedirs(output_dir, exist_ok=True)
 
-            # Save data info
+            # Save results in the subdirectory
             data_info = {'length': lengths, '_nframes': nframes}
-            np.save(f"{output_prefix}datainfo_min.npy", data_info)
-
-            # Save distances and indices without vstack
-            np.save(f"{output_prefix}dist_min.npy", dists)  # Remove vstack
-            np.save(f"{output_prefix}inds_min.npy", inds)  # Remove vstack
+            np.save(os.path.join(output_dir, "datainfo_min.npy"), data_info)
+            np.save(os.path.join(output_dir, "dist_min.npy"), dists)
+            np.save(os.path.join(output_dir, "inds_min.npy"), inds)
 
             print(f"Results saved in: {self.args.interim_dir}")
 
@@ -189,12 +188,17 @@ def run_pipeline(args) -> Dict:
     if not hasattr(args, 'interim_dir'):
         args.interim_dir = os.path.join(project_root, 'data', args.protein_name, 'interim')
 
-    # Create directories if they don't exist
+    # Create base interim directory if it doesn't exist
     os.makedirs(args.interim_dir, exist_ok=True)
 
+    # Initialize processor and run pipeline
     processor = TrajectoryProcessor(args)
     processor.load_trajectories()
-    processor.process_and_save()
+    output_dir = processor.process_and_save()  # This will now return the output directory path
+
+    # Add output directory to the returned data
+    processor.data['output_dir'] = output_dir
     return processor.data
+
 
 

@@ -12,27 +12,32 @@ sys.path.append(str(project_root))
 class TestPreparation:
     @pytest.fixture
     def setup_paths(self):
-        # Define paths for both outputs
+        # Define paths
         self.reference_path = os.path.join(project_root, "forked", "RevGraphVAMP", "intermediate")
-        self.generated_path = os.path.join(project_root, "data", "ab42", "interim")
+        self.generated_base_path = os.path.join(project_root, "data", "ab42", "interim")
 
-        # Define file patterns
-        self.reference_prefix = "red_5nbrs_1ns_"
-        self.generated_prefix = "ab42_10nbrs_1ns_"
-        self.file_suffixes = [
+        # Define prefixes and directory
+        self.reference_prefix = "red_5nbrs_1ns_"  # For reference files (old format)
+        self.generated_dir = "ab42_10nbrs_1ns"    # For generated files (new format)
+
+        # Define file names
+        self.file_names = [
             "datainfo_min.npy",
             "dist_min.npy",
             "inds_min.npy"
         ]
 
-        return self.reference_path, self.generated_path
+        return self.reference_path, self.generated_base_path
 
     def test_output_comparison(self, setup_paths):
-        reference_path, generated_path = setup_paths
+        reference_path, generated_base_path = setup_paths
+        generated_path = os.path.join(generated_base_path, self.generated_dir)
 
-        for suffix in self.file_suffixes:
-            reference_file = os.path.join(reference_path, f"{self.reference_prefix}{suffix}")
-            generated_file = os.path.join(generated_path, f"{self.generated_prefix}{suffix}")
+        for file_name in self.file_names:
+            # Reference uses prefix format
+            reference_file = os.path.join(reference_path, f"{self.reference_prefix}{file_name}")
+            # Generated uses directory format
+            generated_file = os.path.join(generated_path, file_name)
 
             # Check if files exist
             assert os.path.exists(generated_file), f"Generated file not found: {generated_file}"
@@ -42,13 +47,13 @@ class TestPreparation:
             generated_data = np.load(generated_file, allow_pickle=True)
             reference_data = np.load(reference_file, allow_pickle=True)
 
-            print(f"\nComparing {suffix}:")
+            print(f"\nComparing {file_name}:")
             print(f"Generated file: {os.path.basename(generated_file)}")
             print(f"Reference file: {os.path.basename(reference_file)}")
             print(f"Generated shape: {generated_data.shape}")
             print(f"Reference shape: {reference_data.shape}")
 
-            if suffix == "datainfo_min.npy":
+            if file_name == "datainfo_min.npy":
                 # Handle dictionary data
                 gen_dict = generated_data.item() if isinstance(generated_data, np.ndarray) else generated_data
                 ref_dict = reference_data.item() if isinstance(reference_data, np.ndarray) else reference_data
@@ -97,14 +102,18 @@ class TestPreparation:
                     reference_data,
                     rtol=1e-5,
                     atol=1e-8,
-                    err_msg=f"Mismatch in {suffix}"
+                    err_msg=f"Mismatch in {file_name}"
                 )
-                print(f"Array comparison successful for {suffix}")
+                print(f"Array comparison successful for {file_name}")
 
     def test_file_existence(self, setup_paths):
-        _, generated_path = setup_paths
+        _, generated_base_path = setup_paths
+        generated_path = os.path.join(generated_base_path, self.generated_dir)
+
+        # Check if the directory exists
+        assert os.path.exists(generated_path), f"Expected directory not found: {generated_path}"
 
         # Check if all expected files are generated
-        for suffix in self.file_suffixes:
-            file_path = os.path.join(generated_path, f"{self.generated_prefix}{suffix}")
+        for file_name in self.file_names:
+            file_path = os.path.join(generated_path, file_name)
             assert os.path.exists(file_path), f"Expected file not found: {file_path}"
