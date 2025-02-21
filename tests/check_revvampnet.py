@@ -57,7 +57,7 @@ def test_revvampnet():
         vampu=vampu,
         vamps=vamps,
         score_method='VAMP2',  # Change from 'VAMPCE' to 'VAMP2'
-        n_output=output_dim
+        num_classes=output_dim
     )
 
     # Test partial fit
@@ -105,7 +105,7 @@ def test_revvampnet():
     try:
         steps = 3
         tau = 2
-        predicted, estimated = model.ck_test(steps, tau)
+        predicted, estimated = model.get_ck_test(steps, tau)
         assert predicted.shape == (output_dim, output_dim, steps), "CK test results should have correct shape"
         ck_success = True
     except Exception as e:

@@ -885,6 +885,60 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin, nn.Module):
 
         return implied_timescales
 
+    def get_ck_test(self, trajectories: Union[List[np.ndarray], np.ndarray],
+                    tau: int, steps: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Perform Chapman-Kolmogorov test by comparing predicted and estimated state transitions.
+
+        Parameters
+        ----------
+        trajectories : Union[List[np.ndarray], np.ndarray]
+            Either a list of trajectories or a single trajectory array
+        tau : int
+            Base lag time for the test
+        steps : int
+            Number of prediction steps to test
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            predicted : np.ndarray of shape (n_states, n_states, steps)
+                State transitions predicted by repeated application of the base lag time operator
+            estimated : np.ndarray of shape (n_states, n_states, steps)
+                State transitions directly estimated at longer lag times
+        """
+        # Determine number of states from trajectory data
+        if isinstance(trajectories, list):
+            n_states = trajectories[0].shape[1]
+        else:
+            n_states = trajectories.shape[1]
+
+        # Initialize arrays for predicted and estimated transitions
+        predicted = np.zeros((n_states, n_states, steps))
+        estimated = np.zeros((n_states, n_states, steps))
+
+        # Set initial condition (identity matrix at t=0)
+        predicted[:, :, 0] = np.identity(n_states)
+        estimated[:, :, 0] = np.identity(n_states)
+
+        # Compute predictions for each initial state and time step
+        for i, initial_state in enumerate(np.identity(n_states)):
+            for n in range(1, steps):
+                # Get base Koopman operator
+                koop_base = self.estimate_koopman_op(trajectories, tau)
+
+                # Predict by repeated application of base operator
+                koop_predicted = np.linalg.matrix_power(koop_base, n)
+
+                # Directly estimate at n*tau
+                koop_estimated = self.estimate_koopman_op(trajectories, tau * n)
+
+                # Store results
+                predicted[i, :, n] = initial_state @ koop_predicted
+                estimated[i, :, n] = initial_state @ koop_estimated
+
+        return predicted, estimated
+
     def reset_lag(self) -> None:
         """
         Reset the model's lag time to its original network lag value.
@@ -950,22 +1004,30 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin, nn.Module):
         return self
 
     def fetch_model(self) -> VAMPNetModel:
-        r""" Yields the current model with training scores. """
+        r""" Yields the current model with training scores and VAMP components. """
         from copy import deepcopy
+
+        # Create base model as before
         lobe = deepcopy(self.lobe)
         if self.lobe == self.lobe_timelagged:
             lobe_timelagged = lobe
         else:
             lobe_timelagged = deepcopy(self.lobe_timelagged)
 
+        # Create VAMPNetModel
         model = VAMPNetModel(lobe, lobe_timelagged, dtype=self.dtype, device=self.device)
 
         # Copy train scores if they exist
         if hasattr(self, 'train_scores'):
             model._train_scores = deepcopy(self.train_scores)
-
-        # Copy train scores if they exist
         if hasattr(self, 'validation_scores'):
             model._validation_scores = deepcopy(self.validation_scores)
 
+        # Add VAMP components as attributes (without using add_module to avoid recursion)
+        if hasattr(self, '_vampu'):
+            model._vampu = self._vampu
+        if hasattr(self, '_vamps'):
+            model._vamps = self._vamps
+
         return model
+

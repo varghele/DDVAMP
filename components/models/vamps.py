@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import List, Tuple, Optional, Union
+import numpy as np
 
 
 class VAMPS(nn.Module):
@@ -83,21 +84,53 @@ class VAMPS(nn.Module):
         """
         return [(self.M, self.M)] * 2 + [self.M] + [(self.M, self.M)]
 
-    def forward(self, x: Union[List[torch.Tensor], Tuple[torch.Tensor, ...]]) -> List[torch.Tensor]:
+    def forward(self, x: Union[List[torch.Tensor], Tuple[torch.Tensor, ...], torch.Tensor]) -> Union[
+        List[torch.Tensor], torch.Tensor]:
         """
         Forward pass of the VAMP-S module.
 
         Parameters
         ----------
-        x : Union[List[torch.Tensor], Tuple[torch.Tensor, ...]]
-            Input tensors, either [v, C00, C11, C01, sigma] or
+        x : Union[List[torch.Tensor], Tuple[torch.Tensor, ...], torch.Tensor]
+            Either a single tensor for direct transformation,
+            or input tensors [v, C00, C11, C01, sigma] or
             [chi_t, chi_tau, u, v, C00, C11, C01, sigma]
 
         Returns
         -------
-        List[torch.Tensor]
+        Union[List[torch.Tensor], torch.Tensor]
+            Either transformed single tensor or
             List containing [vamp_e_tile, K_tile, probs/zeros, S_tile]
         """
+        # Get device
+        device = self._s_kernel.device
+
+        # Handle single input case (direct transformation)
+        if isinstance(x, (torch.Tensor, np.ndarray)):
+            if isinstance(x, np.ndarray):
+                x = torch.from_numpy(x)
+            x = x.to(device)
+            kernel_w = self.activation(self._s_kernel)
+            # Reshape kernel for broadcasting
+            kernel_w = kernel_w.view(1, -1)  # Make it (1, n_features)
+            if len(x.shape) == 1:
+                x = x.view(-1, 1)  # Make it (n_samples, 1)
+            return x * kernel_w.to(device)
+
+        # Handle tuple/list input case
+        if isinstance(x, (list, tuple)):
+            if len(x) == 5:
+                v, C00, C11, C01, sigma = x
+                chi_t = chi_tau = u = None
+            elif len(x) == 8:
+                chi_t, chi_tau, u, v, C00, C11, C01, sigma = x
+                u = u[0]
+            else:
+                raise ValueError(f"Expected list/tuple of length 5 or 8, got length {len(x)}")
+        else:
+            raise ValueError(f"Unsupported input type: {type(x)}")
+
+        # Original functionality for list/tuple inputs
         if len(x) == 5:
             v, C00, C11, C01, sigma = x
             chi_t = chi_tau = u = None
@@ -111,7 +144,7 @@ class VAMPS(nn.Module):
         sigma, v = sigma[0], v[0]
 
         # Compute kernel and its transformations
-        kernel_w = self.activation(self._s_kernel).to(self.device)
+        kernel_w = self.activation(self._s_kernel).to(device)
         kernel_w_t = kernel_w.t()
         w1 = kernel_w + kernel_w_t
         w_norm = w1 @ v
@@ -134,7 +167,7 @@ class VAMPS(nn.Module):
             q = (norm * torch.matmul(S, chi_tau_t).t() * torch.matmul(chi_tau, u_t))
             probs = torch.sum(chi_t * q, dim=1)
         else:
-            probs = torch.zeros((n_batch, self.M), device=self.device)
+            probs = torch.zeros((n_batch, self.M), device=device)
 
         # Compute final outputs
         K = S @ sigma
@@ -149,3 +182,4 @@ class VAMPS(nn.Module):
         self.last_output = out
 
         return out
+

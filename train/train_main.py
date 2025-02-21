@@ -10,7 +10,7 @@ from utils.count_parameters import count_parameters
 from deeptime.util.data import TrajectoryDataset
 from components.models.GraphVAMPNet import GraphVampNet
 from components.models.RevVAMPNet import RevVAMPNet
-from train.utils.EarlyStopping import EarlyStopping
+from train.tr_utils.EarlyStopping import EarlyStopping
 from tqdm import tqdm
 from typing import Optional, Tuple
 from components.models.vamps import VAMPS
@@ -19,7 +19,7 @@ import numpy as np
 import random
 from components.activations.ExpActivation import ExpActivation
 import matplotlib.pyplot as plt
-
+from utils.vamp_utils import *
 
 # Removing stochasticity, setting seed so training is always the same
 #torch.backends.cudnn.deterministic = True
@@ -468,14 +468,63 @@ class RevVAMPTrainer:
 
 # For pipeline
 def run_training(args):
-    """Entry point for pipeline integration"""
+    """
+    Entry point for pipeline integration with analysis capabilities.
+    """
+    # Clear CUDA cache before training
     flush_cuda_cache()
+
+    # Initialize and train model
     trainer = RevVAMPTrainer(args)
     model, all_train_epoch = trainer.train()
+
+    # Prepare data for analysis
+    data_np = [traj.cpu().numpy() for traj in trainer.dataset.trajectories]
+
+    # Run model output analysis and get results directly
+    probs, embeddings, attentions = analyze_model_outputs(
+        model=model,
+        data_np=data_np,
+        save_folder=args.save_folder,
+        batch_size=args.batch_size,
+        num_classes=args.num_classes,
+        h_g=args.h_g,
+        num_atoms=args.num_atoms,
+        num_neighbors=args.num_neighbors
+    )
+
+    # Run Chapman-Kolmogorov test
+    steps = 10
+    tau_msm = 20
+    predicted, estimated = get_ck_test(probs, steps, tau_msm)
+
+    # Plot and save CK test results
+    plot_ck_test(predicted, estimated, args.num_classes, steps, tau_msm, args.save_folder)
+    np.savez(os.path.join(args.save_folder, 'ck.npz'), list((predicted, estimated)))
+    print("CK test complete")
+
+    # Calculate and plot implied timescales
+    max_tau = 250
+    lags = [i for i in range(1, max_tau, 2)]
+    its = get_its(probs, lags)
+    # Using save_path instead of save_folder to match the function signature
+    plot_its(its, lags, save_path=args.save_folder, ylog=False)
+    np.save(os.path.join(args.save_folder, 'ITS.npy'), np.array(its))
+    print("ITS calculation complete")
+
     return {
         'model': model,
-        'epochs_trained': all_train_epoch
+        'epochs_trained': all_train_epoch,
+        'probabilities': probs,
+        'embeddings': embeddings,
+        'attentions': attentions,
+        'predictions': predicted,
+        'estimations': estimated,
+        'implied_timescales': its,
+        'lags': lags
     }
+
+
 
 def main():
     args = buildParser().parse_args()

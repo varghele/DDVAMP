@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple
-from train.utils.EarlyStopping import EarlyStopping
-from train.utils.record_result import record_result
+from train.tr_utils.EarlyStopping import EarlyStopping
+from train.tr_utils.record_result import record_result
 from tqdm import tqdm
 import numpy as np
 from copy import deepcopy

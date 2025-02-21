@@ -86,8 +86,8 @@ def get_hardcoded_args():
         "--tau", "1",
         "--batch_size", "32",
         "--val_frac", "0.2",
-        "--epochs", "10",
-        "--pre-train-epoch", "10",
+        "--epochs", "2",
+        "--pre-train-epoch", "3",
         "--seed", "42",
         "--score_method", "VAMPCE",
 
