@@ -318,3 +318,147 @@ def analyze_model_outputs(
     print(f"Number of trajectories: {len(probs)}")
 
     return probs, embeddings, attentions
+
+def calculate_state_attention_maps(attentions, state_assignments, num_classes, num_atoms):
+    """
+    Calculate attention maps for each state from neighbor attention values.
+
+    Parameters
+    ----------
+    attentions : List[np.ndarray]
+        List of attention values for each trajectory
+    state_assignments : List[np.ndarray]
+        List of state assignments for each trajectory
+    num_classes : int
+        Number of states
+    num_atoms : int
+        Number of atoms in the system
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        state_attention_maps: Average attention maps for each state (num_states, num_atoms, num_atoms)
+        state_populations: Population of each state
+    """
+    # Calculate state populations
+    state_populations = np.zeros(num_classes)
+    for states in state_assignments:
+        unique, counts = np.unique(states, return_counts=True)
+        state_populations[unique] += counts
+    state_populations = state_populations / np.sum(state_populations)
+
+    # Initialize state attention maps
+    state_attention_maps = np.zeros((num_classes, num_atoms, num_atoms))
+
+    # Process each state
+    for state in range(num_classes):
+        state_masks = [states == state for states in state_assignments]
+        state_attentions = [att[mask] for att, mask in zip(attentions, state_masks)]
+
+        if any(len(att) > 0 for att in state_attentions):
+            # Convert and average attention maps
+            converted_attentions = []
+            for att_group in state_attentions:
+                if len(att_group) > 0:
+                    # Average over frames first
+                    avg_att = att_group.mean(axis=0)
+                    # Convert to full attention matrix
+                    conv_att = convert_neighbor_attention(avg_att, num_atoms)
+                    converted_attentions.append(conv_att)
+
+            if converted_attentions:
+                state_attention_maps[state] = np.mean(converted_attentions, axis=0)
+
+    return state_attention_maps, state_populations
+
+
+def convert_neighbor_attention(att, num_atoms):
+    """
+    Convert neighbor attention to full attention matrix.
+
+    Parameters
+    ----------
+    att : np.ndarray
+        Neighbor attention matrix (num_atoms x num_neighbors)
+    num_atoms : int
+        Number of atoms in the system
+
+    Returns
+    -------
+    np.ndarray
+        Full attention matrix (num_atoms x num_atoms)
+    """
+    full_att = np.zeros((num_atoms, num_atoms))
+    for i in range(num_atoms):
+        weights = att[i]
+        if np.sum(weights) > 0:
+            weights = weights / np.sum(weights)
+        for j, w in enumerate(weights):
+            if j < len(weights):
+                full_att[i, j] = w
+    return full_att
+
+
+def plot_state_attention_maps(adjs, states_order, n_states, state_populations, save_path=None):
+    """
+    Plot attention maps for each state.
+
+    Parameters
+    ----------
+    adjs : np.ndarray
+        Attention matrices for each state [n_states, n_atom, n_atom]
+    states_order : np.ndarray
+        Order of states by population
+    n_states : int
+        Number of states
+    state_populations : np.ndarray
+        Population of each state
+    save_path : str, optional
+        Path to save the figure
+    """
+    plt.style.use('default')
+    plt.rcParams['axes.linewidth'] = 1.0
+    plt.set_cmap('RdYlBu_r')
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 12), dpi=150)
+    axes = axes.flatten()
+
+    n_atoms = adjs[0].shape[0]
+    x_range = np.arange(0, n_atoms, 2)
+    x_label = np.arange(1, n_atoms + 1, 2)
+
+    vmin = np.min([adj.min() for adj in adjs])
+    vmax = np.max([adj.max() for adj in adjs])
+
+    for i in range(n_states):
+        ax = axes[i]
+
+        im = ax.imshow(adjs[states_order[i]], vmin=vmin, vmax=vmax)
+
+        ax.hlines(np.arange(0, n_atoms) - 0.5, -0.5, n_atoms - 0.5,
+                  color='k', linewidth=0.5, alpha=0.3)
+        ax.vlines(np.arange(0, n_atoms) - 0.5, -0.5, n_atoms - 0.5,
+                  color='k', linewidth=0.5, alpha=0.3)
+
+        ax.set_xticks(x_range)
+        ax.set_xticklabels(x_label, fontsize=8)
+        ax.set_yticks(x_range)
+        ax.set_yticklabels(x_label, fontsize=8)
+
+        ax.set_title(f'State {i + 1}\nPopulation: {state_populations[states_order[i]]:.1%}',
+                     fontsize=10, pad=10)
+
+        plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+
+    fig.subplots_adjust(right=0.9)
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+    cbar = fig.colorbar(im, cax=cbar_ax)
+    cbar.set_label('Attention Weight', fontsize=10)
+
+    fig.suptitle('Attention Maps by State', fontsize=14, y=0.95)
+
+    #plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"Figure saved to {save_path}")

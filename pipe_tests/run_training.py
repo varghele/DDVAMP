@@ -62,7 +62,7 @@ def get_hardcoded_args():
         "--steps", "training",
 
         # Model Architecture
-        "--num_classes", "6",
+        "--num_classes", "4",
         "--n_conv", "4",
         "--h_a", "16",
         "--h_g", "8",
@@ -78,16 +78,16 @@ def get_hardcoded_args():
         "--conv_type", "SchNet",
         "--num_heads", "2",
         "--residual",
-        "--attention_pool",
         "--atom_init", "normal",
+        #"--attention_pool",
 
         # Training Parameters
-        "--lr", "0.01",
-        "--tau", "1",
-        "--batch_size", "32",
+        "--lr", "0.001",
+        "--tau", "20",
+        "--batch_size", "500",
         "--val_frac", "0.2",
-        "--epochs", "2",
-        "--pre-train-epoch", "3",
+        "--epochs", "100",
+        "--pre-train-epoch", "100",
         "--seed", "42",
         "--score_method", "VAMPCE",
 

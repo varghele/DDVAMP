@@ -158,7 +158,7 @@ class RevVAMPTrainer:
 
     def _initialize_model(self):
         """Initialize the RevVAMPNet model and its components."""
-        lobe = GraphVampNet()
+        lobe = GraphVampNet(args=self.args)
         lobe_timelagged = deepcopy(lobe).to(device=self.device)
         lobe = lobe.to(self.device)
 
@@ -201,7 +201,11 @@ class RevVAMPTrainer:
         self.vampnet.lobe_timelagged.requires_grad_(False)
 
         # Calculate state probabilities
-        data_size = sum(batch[0].shape[0] for batch, _ in self.loader_train)
+        data_size = 0
+        # First calculate the exact size needed by summing up all batch sizes
+        with torch.no_grad():
+            for batch_0, batch_t in self.loader_train:
+                data_size += batch_0.shape[0]
         state_probs = np.zeros((data_size, int(self.args.num_classes)))
         state_probs_tau = np.zeros((data_size, int(self.args.num_classes)))
 
@@ -373,9 +377,9 @@ class RevVAMPTrainer:
         )
 
         for epoch in tqdm(range(self.args.epochs)):
-            if epoch == 100:
-                for param_group in self.vampnet.optimizer.param_groups:
-                    param_group['lr'] = 0.2
+            #if epoch == 100:
+            #    for param_group in self.vampnet.optimizer.param_groups:
+            #        param_group['lr'] = 0.001
 
             try:
                 batch_count = 0
@@ -495,7 +499,7 @@ def run_training(args):
 
     # Run Chapman-Kolmogorov test
     steps = 10
-    tau_msm = 20
+    tau_msm = 20 #TODO: this is args.tau
     predicted, estimated = get_ck_test(probs, steps, tau_msm)
 
     # Plot and save CK test results
@@ -512,6 +516,28 @@ def run_training(args):
     np.save(os.path.join(args.save_folder, 'ITS.npy'), np.array(its))
     print("ITS calculation complete")
 
+    # Process attention maps
+    # Get state assignments
+    state_assignments = [np.argmax(traj, axis=1) for traj in probs]
+
+    # Calculate attention maps
+    state_attention_maps, state_populations = calculate_state_attention_maps(
+        attentions=attentions,
+        state_assignments=state_assignments,
+        num_classes=args.num_classes,
+        num_atoms=args.num_atoms
+    )
+
+    # Plot attention maps
+    plot_state_attention_maps(
+        adjs=state_attention_maps,
+        states_order=np.argsort(state_populations)[::-1],
+        n_states=args.num_classes,
+        state_populations=state_populations,  # Add this parameter
+        save_path=os.path.join(args.save_folder, 'attention_maps.png')
+    )
+    print("Attention analysis complete")
+
     return {
         'model': model,
         'epochs_trained': all_train_epoch,
@@ -521,7 +547,9 @@ def run_training(args):
         'predictions': predicted,
         'estimations': estimated,
         'implied_timescales': its,
-        'lags': lags
+        'lags': lags,
+        'state_populations': state_populations,
+        'state_attention_maps': state_attention_maps
     }
 
 
