@@ -3,7 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Union, Tuple
 import os
-
+import mdtraj as md
+from glob import glob
+from tqdm import tqdm
 
 def chunks(data, chunk_size=5000):
     '''
@@ -22,6 +24,15 @@ def chunks(data, chunk_size=5000):
 
         for j in range(0, len(data), chunk_size):
             yield data[j:j + chunk_size, ...]
+
+def scale(score):
+    """Scale scores to [0,1] range"""
+    score_min = score.min()
+    score_max = score.max()
+    if score_max == score_min:
+        print(f"Warning: constant score value {score_max}")
+        return np.zeros_like(score)
+    return (score - score_min) / (score_max - score_min)
 
 
 def estimate_koopman_op(trajs, tau):
@@ -319,7 +330,12 @@ def analyze_model_outputs(
 
     return probs, embeddings, attentions
 
-def calculate_state_attention_maps(attentions, state_assignments, num_classes, num_atoms):
+
+def calculate_state_attention_maps(attentions: List[np.ndarray],
+                                   neighbor_indices: List[np.ndarray],
+                                   state_assignments: List[np.ndarray],
+                                   num_classes: int,
+                                   num_atoms: int) -> Tuple[np.ndarray, np.ndarray]:
     """
     Calculate attention maps for each state from neighbor attention values.
 
@@ -327,6 +343,8 @@ def calculate_state_attention_maps(attentions, state_assignments, num_classes, n
     ----------
     attentions : List[np.ndarray]
         List of attention values for each trajectory
+    neighbor_indices : List[np.ndarray]
+        List of neighbor indices for each trajectory
     state_assignments : List[np.ndarray]
         List of state assignments for each trajectory
     num_classes : int
@@ -337,7 +355,7 @@ def calculate_state_attention_maps(attentions, state_assignments, num_classes, n
     Returns
     -------
     Tuple[np.ndarray, np.ndarray]
-        state_attention_maps: Average attention maps for each state (num_states, num_atoms, num_atoms)
+        state_attention_maps: Average attention maps for each state
         state_populations: Population of each state
     """
     # Calculate state populations
@@ -353,35 +371,40 @@ def calculate_state_attention_maps(attentions, state_assignments, num_classes, n
     # Process each state
     for state in range(num_classes):
         state_masks = [states == state for states in state_assignments]
-        state_attentions = [att[mask] for att, mask in zip(attentions, state_masks)]
+        state_attentions = []
 
-        if any(len(att) > 0 for att in state_attentions):
-            # Convert and average attention maps
-            converted_attentions = []
-            for att_group in state_attentions:
-                if len(att_group) > 0:
-                    # Average over frames first
-                    avg_att = att_group.mean(axis=0)
-                    # Convert to full attention matrix
-                    conv_att = convert_neighbor_attention(avg_att, num_atoms)
-                    converted_attentions.append(conv_att)
+        for traj_idx, mask in enumerate(state_masks):
+            if np.any(mask):
+                # Get attention and indices for frames in this state
+                att = attentions[traj_idx][mask]
+                inds = neighbor_indices[traj_idx][mask]
 
-            if converted_attentions:
-                state_attention_maps[state] = np.mean(converted_attentions, axis=0)
+                # Average over frames
+                avg_att = att.mean(axis=0)
+                avg_inds = inds[0]  # Use first frame's indices as they should be constant
+
+                # Convert to full attention matrix
+                full_att = convert_neighbor_attention(avg_att, avg_inds, num_atoms)
+                state_attentions.append(full_att)
+
+        if state_attentions:
+            state_attention_maps[state] = np.mean(state_attentions, axis=0)
 
     return state_attention_maps, state_populations
 
 
-def convert_neighbor_attention(att, num_atoms):
+def convert_neighbor_attention(neighbor_attn: np.ndarray, neighbor_indices: np.ndarray, num_atoms: int) -> np.ndarray:
     """
-    Convert neighbor attention to full attention matrix.
+    Convert neighbor attention to full attention matrix considering all residue interactions.
 
     Parameters
     ----------
-    att : np.ndarray
-        Neighbor attention matrix (num_atoms x num_neighbors)
+    neighbor_attn : np.ndarray
+        Attention weights for neighbors (num_atoms x num_neighbors)
+    neighbor_indices : np.ndarray
+        Indices of neighbors for each atom (num_atoms x num_neighbors)
     num_atoms : int
-        Number of atoms in the system
+        Total number of atoms/residues
 
     Returns
     -------
@@ -389,19 +412,31 @@ def convert_neighbor_attention(att, num_atoms):
         Full attention matrix (num_atoms x num_atoms)
     """
     full_att = np.zeros((num_atoms, num_atoms))
+
     for i in range(num_atoms):
-        weights = att[i]
+        # Get neighbors and their attention weights for atom i
+        neighbors = neighbor_indices[i]
+        weights = neighbor_attn[i]
+
+        # Normalize weights
         if np.sum(weights) > 0:
             weights = weights / np.sum(weights)
-        for j, w in enumerate(weights):
-            if j < len(weights):
-                full_att[i, j] = w
+
+        # Distribute attention to all atoms
+        for j, (neighbor, weight) in enumerate(zip(neighbors, weights)):
+            if neighbor < num_atoms:  # ensure valid neighbor index
+                full_att[i, neighbor] = weight
+                full_att[i, i] = 1.0 - np.sum(weights)  # self-attention
+
+    # Symmetrize the attention matrix
+    full_att = 0.5 * (full_att + full_att.T)
+
     return full_att
 
 
 def plot_state_attention_maps(adjs, states_order, n_states, state_populations, save_path=None):
     """
-    Plot attention maps for each state.
+    Plot attention maps for each state individually and in a combined figure.
 
     Parameters
     ----------
@@ -414,14 +449,11 @@ def plot_state_attention_maps(adjs, states_order, n_states, state_populations, s
     state_populations : np.ndarray
         Population of each state
     save_path : str, optional
-        Path to save the figure
+        Base path to save the figures
     """
     plt.style.use('default')
     plt.rcParams['axes.linewidth'] = 1.0
     plt.set_cmap('RdYlBu_r')
-
-    fig, axes = plt.subplots(2, 2, figsize=(12, 12), dpi=150)
-    axes = axes.flatten()
 
     n_atoms = adjs[0].shape[0]
     x_range = np.arange(0, n_atoms, 2)
@@ -430,9 +462,51 @@ def plot_state_attention_maps(adjs, states_order, n_states, state_populations, s
     vmin = np.min([adj.min() for adj in adjs])
     vmax = np.max([adj.max() for adj in adjs])
 
+    # Create individual plots for each state
+    for i in range(n_states):
+        fig, ax = plt.subplots(figsize=(8, 8), dpi=150)
+
+        im = ax.imshow(adjs[states_order[i]], vmin=vmin, vmax=vmax)
+
+        ax.hlines(np.arange(0, n_atoms) - 0.5, -0.5, n_atoms - 0.5,
+                  color='k', linewidth=0.5, alpha=0.3)
+        ax.vlines(np.arange(0, n_atoms) - 0.5, -0.5, n_atoms - 0.5,
+                  color='k', linewidth=0.5, alpha=0.3)
+
+        ax.set_xticks(x_range)
+        ax.set_xticklabels(x_label, fontsize=8)
+        ax.set_yticks(x_range)
+        ax.set_yticklabels(x_label, fontsize=8)
+
+        ax.set_title(f'State {i + 1}\nPopulation: {state_populations[states_order[i]]:.1%}',
+                     fontsize=12, pad=10)
+
+        plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+
+        # Add colorbar
+        cbar = plt.colorbar(im)
+        cbar.set_label('Attention Weight', fontsize=10)
+
+        if save_path:
+            state_save_path = save_path.replace('.png', f'_state_{i + 1}.png')
+            plt.savefig(state_save_path, bbox_inches='tight')
+            print(f"Saved state {i + 1} plot to: {state_save_path}")
+        plt.close()
+
+    # Create combined plot
+    # Calculate number of rows and columns needed
+    n_cols = int(np.ceil(np.sqrt(n_states)))
+    n_rows = int(np.ceil(n_states / n_cols))
+
+    # Create combined figure
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows), dpi=150)
+    if n_states > 1:
+        axes = axes.flatten()
+    else:
+        axes = [axes]
+
     for i in range(n_states):
         ax = axes[i]
-
         im = ax.imshow(adjs[states_order[i]], vmin=vmin, vmax=vmax)
 
         ax.hlines(np.arange(0, n_atoms) - 0.5, -0.5, n_atoms - 0.5,
@@ -450,6 +524,11 @@ def plot_state_attention_maps(adjs, states_order, n_states, state_populations, s
 
         plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
 
+    # Remove empty subplots
+    for i in range(n_states, len(axes)):
+        axes[i].remove()
+
+    # Add colorbar
     fig.subplots_adjust(right=0.9)
     cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
     cbar = fig.colorbar(im, cax=cbar_ax)
@@ -457,8 +536,171 @@ def plot_state_attention_maps(adjs, states_order, n_states, state_populations, s
 
     fig.suptitle('Attention Maps by State', fontsize=14, y=0.95)
 
-    #plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"Saved combined plot to: {save_path}")
+
+    plt.close()
+
+
+def plot_state_attention_weights(state_attention_maps: np.ndarray,
+                                 topology_file: str,
+                                 n_states: int,
+                                 save_path: str = None):
+    """
+    Plot average attention weights for residues across different states.
+
+    Parameters
+    ----------
+    state_attention_maps : np.ndarray
+        Attention maps for each state [n_states, n_atoms, n_atoms]
+    topology_file : str
+        Path to topology file (PDB or similar) to get residue names
+    n_states : int
+        Number of states
+    save_path : str, optional
+        Path to save the figure
+    """
+
+    # Get residue names from topology
+    top = md.load(topology_file).topology
+    residues = [f"{res.name}{res.resSeq}" for res in top.residues]
+    n_atoms = len(residues)
+
+    # Calculate scaled scores
+    scores_p = np.stack([scale(state_map.sum(axis=0))
+                         for state_map in state_attention_maps])
+
+    # Create plot
+    plt.style.use('default')
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6), dpi=200)
+
+    # Plot heatmap
+    h = ax.imshow(scores_p)
+
+    # Set ticks and labels
+    ax.set_xticks(np.arange(n_atoms))
+    ax.set_yticks(np.arange(n_states))  # Set proper number of y-ticks
+    ax.set_yticklabels([str(i) for i in range(1, n_states+1)])  # Label states from 1 to n_states
+    ax.set_xticklabels(residues, fontweight='bold', rotation=90)
+
+    # Add y-axis label
+    ax.set_ylabel('States', fontweight='bold')
+
+    # Add grid lines
+    ax.hlines(np.arange(0, n_states) - 0.5, -0.5, n_atoms - 0.5,
+              color='k', linewidth=1, alpha=0.5)
+    ax.vlines(np.arange(0, n_atoms) - 0.5, -0.5, n_states - 0.5,
+              color='k', linewidth=0.5, alpha=0.5)
+
+    # Add colorbar
+    cbar = plt.colorbar(h, ax=ax, fraction=0.01)
+
+    # Set font properties
+    fontsize = 10
+    for tick in ax.xaxis.get_major_ticks():
+        tick.label1.set_fontsize(fontsize)
+        tick.label1.set_fontweight('bold')
+    for tick in ax.yaxis.get_major_ticks():
+        tick.label1.set_fontsize(fontsize)
+        tick.label1.set_fontweight('bold')
+
+    plt.tight_layout()
 
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
         print(f"Figure saved to {save_path}")
+
+    return fig, ax
+
+
+def generate_state_structures(traj_folder: str,
+                              topology_file: str,
+                              state_assignments: List[np.ndarray],
+                              save_dir: str,
+                              protein_name: str,
+                              stride: int = 10) -> List[str]:
+    """
+    Generate representative PDB structures for each conformational state from multiple trajectories.
+
+    Parameters
+    ----------
+    traj_folder : str
+        Path to the folder containing trajectory files
+    topology_file : str
+        Path to the topology file
+    state_assignments : List[np.ndarray]
+        List of state assignments for each frame
+    save_dir : str
+        Directory to save the output PDB files
+    protein_name : str
+        Name of the protein for file naming
+    stride : int, optional
+        Load every nth frame to reduce memory usage (default: 10)
+
+    Returns
+    -------
+    List[str]
+        Paths to the generated PDB files
+    """
+    # Get trajectory files
+    traj_pattern = os.path.join(traj_folder, "r?", "traj*")
+    traj_files = sorted(glob(traj_pattern))
+
+    if not traj_files:
+        raise ValueError(f"No trajectory files found in {traj_folder}")
+
+    # Load trajectories with stride
+    trajs = []
+    frame_counts = []
+    print(f"Loading trajectories with stride {stride}...")
+    for traj_file in tqdm(traj_files, desc="Loading trajectories"):
+        traj = md.load(traj_file, top=topology_file, stride=stride)
+        trajs.append(traj)
+        frame_counts.append(len(traj))
+
+    print("Combining trajectories...")
+    combined_traj = md.join(trajs)
+    print(f"Total frames after stride: {len(combined_traj)}")
+
+    # Adjust state assignments for stride
+    strided_assignments = []
+    current_idx = 0
+    for count in frame_counts:
+        strided_count = (count + stride - 1) // stride  # ceiling division
+        if current_idx + strided_count <= len(state_assignments[0]):
+            strided_assignments.append(state_assignments[0][current_idx:current_idx + strided_count])
+        current_idx += strided_count
+
+    # Flatten state assignments
+    all_states = np.concatenate(strided_assignments)
+    unique_states = np.unique(all_states)
+    output_files = []
+
+    print("Processing states...")
+    for state in tqdm(unique_states, desc="Generating state structures"):
+        # Get frames belonging to this state
+        state_frames = np.where(all_states == state)[0]
+
+        if len(state_frames) == 0:
+            continue
+
+        # Extract trajectory for this state
+        state_traj = combined_traj[state_frames]
+
+        # Calculate average structure
+        average_structure = state_traj.superpose(state_traj[0])
+
+        # Find frame closest to average
+        average_xyz = average_structure.xyz.mean(axis=0)
+        distances = np.sqrt(np.sum((state_traj.xyz - average_xyz) ** 2, axis=(1, 2)))
+        representative_frame = state_frames[np.argmin(distances)]
+
+        # Save representative structure
+        output_file = os.path.join(save_dir, f"{protein_name}_state_{state + 1}.pdb")
+        combined_traj[representative_frame].save_pdb(output_file)
+        output_files.append(output_file)
+
+        print(f"State {state + 1}: {len(state_frames)} frames, saved to {output_file}")
+
+    return output_files

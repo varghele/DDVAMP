@@ -6,6 +6,7 @@ import mdtraj as md
 from typing import List, Tuple, Union, Dict
 from glob import glob
 import os
+import shutil
 
 
 class TrajectoryProcessor:
@@ -18,23 +19,33 @@ class TrajectoryProcessor:
 
     def prepare_topology(self) -> str:
         """Convert topology to PDB if needed and count residues"""
+        # Generate source PDB path
         if self.args.topology.endswith('.pdb'):
-            pdb_file = self.args.topology
+            source_pdb = self.args.topology
         elif self.args.topology.endswith('.gro'):
-            pdb_file = self.args.topology.replace('.gro', '.pdb')
-            if not os.path.exists(pdb_file):
+            source_pdb = self.args.topology.replace('.gro', '.pdb')
+            if not os.path.exists(source_pdb):
                 try:
                     traj = md.load(self.args.topology)
-                    traj.save_pdb(pdb_file)
+                    traj.save_pdb(source_pdb)
                 except Exception as e:
                     raise RuntimeError(f"Failed to convert GRO to PDB: {str(e)}")
         else:
             raise ValueError("Topology file must be either .pdb or .gro")
 
-        structure = md.load(pdb_file)
+        # Copy PDB to interim directory
+        dest_pdb = os.path.join(self.args.interim_dir, f"{self.args.protein_name}.pdb")
+        try:
+            shutil.copy2(source_pdb, dest_pdb)
+            print(f"Copied topology PDB to: {dest_pdb}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to copy PDB to interim directory: {str(e)}")
+
+        # Load structure and count residues
+        structure = md.load(dest_pdb)
         self.num_residues = structure.topology.n_residues
         print(f"Number of residues detected: {self.num_residues}")
-        return pdb_file
+        return dest_pdb
 
     def load_trajectories(self) -> Dict:
         """Load and process trajectory files"""

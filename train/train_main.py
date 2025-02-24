@@ -497,6 +497,9 @@ def run_training(args):
         num_neighbors=args.num_neighbors
     )
 
+    # Use the indices already loaded in trainer
+    neighbor_indices = [trainer.inds1]
+
     # Run Chapman-Kolmogorov test
     steps = 10
     tau_msm = 20 #TODO: this is args.tau
@@ -520,9 +523,23 @@ def run_training(args):
     # Get state assignments
     state_assignments = [np.argmax(traj, axis=1) for traj in probs]
 
-    # Calculate attention maps
+    # Get state structures
+    print("Generating state structures")
+    # After getting state assignments
+    state_structures = generate_state_structures(
+        traj_folder=args.traj_folder,
+        topology_file=os.path.join(os.path.dirname(args.data_path), f"{args.protein_name}.pdb"),
+        state_assignments=state_assignments,
+        save_dir=args.save_folder,
+        protein_name=args.protein_name,
+        stride=1  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
+    )
+    print("Representative state structures generated")
+
+    # Calculate attention maps with pre-calculated neighbor indices
     state_attention_maps, state_populations = calculate_state_attention_maps(
         attentions=attentions,
+        neighbor_indices=neighbor_indices,
         state_assignments=state_assignments,
         num_classes=args.num_classes,
         num_atoms=args.num_atoms
@@ -535,6 +552,14 @@ def run_training(args):
         n_states=args.num_classes,
         state_populations=state_populations,  # Add this parameter
         save_path=os.path.join(args.save_folder, 'attention_maps.png')
+    )
+
+    # Plot attention weights
+    plot_state_attention_weights(
+        state_attention_maps=state_attention_maps,
+        topology_file=os.path.join(os.path.dirname(args.data_path), f"{args.protein_name}.pdb"),
+        n_states=args.num_classes,
+        save_path=os.path.join(args.save_folder, f'{args.protein_name}_attention_weights.png')
     )
     print("Attention analysis complete")
 
@@ -549,7 +574,8 @@ def run_training(args):
         'implied_timescales': its,
         'lags': lags,
         'state_populations': state_populations,
-        'state_attention_maps': state_attention_maps
+        'state_attention_maps': state_attention_maps,
+        'state_structures': state_structures
     }
 
 

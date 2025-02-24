@@ -9,6 +9,7 @@ sys.path.insert(0, project_root)
 
 from args.pipeline_args import buildParser as buildPipelineParser
 from args.training_args import buildParser as buildTrainingParser
+from args.preparation_args import buildParser as buildPreparationParser
 from train.train_main import run_training
 import argparse
 import torch
@@ -34,9 +35,10 @@ def get_hardcoded_args():
     # Create parsers
     pipeline_parser = buildPipelineParser()
     train_parser = buildTrainingParser()
+    preparation_parser = buildPreparationParser()
 
     # Combine parsers
-    all_args = argparse.ArgumentParser(parents=[pipeline_parser, train_parser],
+    all_args = argparse.ArgumentParser(parents=[pipeline_parser, train_parser, preparation_parser],
                                        conflict_handler='resolve')
 
     # Define the protein name and parameters
@@ -60,6 +62,10 @@ def get_hardcoded_args():
         # Pipeline args
         "--protein-name", protein_name,
         "--steps", "training",
+        "--topology", "../forked/RevGraphVAMP/trajectories/red/topol.gro",
+        "--traj-folder", "../forked/RevGraphVAMP/trajectories/red/",
+        #"--topology", "../datasets/ab42/trajectories/trajectories/red/topol.gro",
+        #"--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
 
         # Model Architecture
         "--num_classes", "4",

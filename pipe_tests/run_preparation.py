@@ -29,6 +29,8 @@ def get_hardcoded_args():
         # Preparation args
         "--topology", "../forked/RevGraphVAMP/trajectories/red/topol.gro",
         "--traj-folder", "../forked/RevGraphVAMP/trajectories/red/",
+        #"--topology", "../datasets/ab42/trajectories/trajectories/red/topol.gro",
+        #"--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
         "--num-neighbors", "10",
         "--stride", "5",
         "--chunk-size", "5000"
