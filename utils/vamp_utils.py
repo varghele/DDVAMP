@@ -933,7 +933,7 @@ def visualize_state_ensemble(state_structures: Dict[int, List[str]],
         # Load and process structures
         for i, pdb_file in enumerate(structures):
             dist = float(pdb_file.split('_dist_')[-1].replace('.pdb', ''))
-            opacity = 1.0 - (i / len(structures))
+            opacity = 1.0 - (i / len(structures) - 0.05)
             name = f"state_{state_num + 1}_rank_{i}"
 
             cmd.load(pdb_file, name)
@@ -966,8 +966,9 @@ def visualize_state_ensemble(state_structures: Dict[int, List[str]],
         cmd.delete("all")
 
     # Clean up PyMOL session without killing the process
-    #cmd.delete("all")
-    #cmd.reinitialize()
+    cmd.delete("all")
+    cmd.reinitialize()
+    cmd.quit()
 
 
 def plot_state_network(probs: List[np.ndarray],
