@@ -1,11 +1,16 @@
 import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import List, Union, Tuple
+from typing import List, Union, Tuple, Dict
 import os
+import sys
 import mdtraj as md
 from glob import glob
 from tqdm import tqdm
+import pymol
+from pymol import cmd
+import matplotlib.pyplot as plt
+from matplotlib.image import imread
+import numpy as np
+import pandas as pd
 
 def chunks(data, chunk_size=5000):
     '''
@@ -331,6 +336,159 @@ def analyze_model_outputs(
     return probs, embeddings, attentions
 
 
+def calculate_transition_matrices(prob_trajectories: List[np.ndarray], lag_time: int = 1) -> Tuple[
+    np.ndarray, np.ndarray]:
+    """
+    Calculate both standard and non-self transition matrices from state probability trajectories.
+
+    Parameters
+    ----------
+    prob_trajectories : List[np.ndarray]
+        List of state probability trajectories
+    lag_time : int
+        Lag time for transition matrix calculation
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        Standard transition matrix and non-self transition matrix
+    """
+
+    def single_trajectory_transitions(prob_traj, tau):
+        n_frames = prob_traj.shape[0]
+        n_states = prob_traj.shape[1]
+
+        # Initialize matrices
+        trans_matrix = np.zeros((n_states, n_states))
+        trans_matrix_no_self = np.zeros((n_states, n_states))
+
+        # Count transitions
+        for t in range(n_frames - tau):
+            state_t = np.argmax(prob_traj[t])
+            state_t_plus_tau = np.argmax(prob_traj[t + tau])
+            trans_matrix[state_t, state_t_plus_tau] += 1
+
+            # Only count non-self transitions
+            if state_t != state_t_plus_tau:
+                trans_matrix_no_self[state_t, state_t_plus_tau] += 1
+
+        # Normalize matrices
+        row_sums = trans_matrix.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1
+        trans_matrix = trans_matrix / row_sums
+
+        row_sums_no_self = trans_matrix_no_self.sum(axis=1, keepdims=True)
+        row_sums_no_self[row_sums_no_self == 0] = 1
+        trans_matrix_no_self = trans_matrix_no_self / row_sums_no_self
+
+        return trans_matrix, trans_matrix_no_self
+
+    # Calculate matrices for each trajectory
+    matrices = [single_trajectory_transitions(traj, lag_time) for traj in prob_trajectories]
+
+    # Average across trajectories
+    avg_matrix = np.mean([m[0] for m in matrices], axis=0)
+    avg_matrix_no_self = np.mean([m[1] for m in matrices], axis=0)
+
+    return avg_matrix, avg_matrix_no_self
+
+
+def plot_transition_probabilities(probs: List[np.ndarray],
+                                  save_dir: str,
+                                  protein_name: str,
+                                  lag_time: int = 1):
+    """
+    Plot both standard and non-self transition probability matrices.
+
+    Parameters
+    ----------
+    probs : List[np.ndarray]
+        List of state probability trajectories
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein for file naming
+    lag_time : int, optional
+        Lag time for transition matrix calculation
+    """
+
+    # Calculate transition matrices
+    trans_matrix, trans_matrix_no_self = calculate_transition_matrices(probs, lag_time)
+
+    # Plot both matrices
+    for matrix, suffix in [(trans_matrix, "all"), (trans_matrix_no_self, "no_self")]:
+        fig, ax = plt.subplots(figsize=(10, 8))
+
+        # Create custom matrix for visualization of non-self transitions
+        if suffix == "no_self":
+            # Create masked array with diagonal set to -1 for black color
+            viz_matrix = matrix.copy()
+            np.fill_diagonal(viz_matrix, -1)
+        else:
+            viz_matrix = matrix
+
+        # Create heatmap
+        im = ax.imshow(viz_matrix,
+                       cmap='YlOrRd',
+                       vmin=0 if suffix == "all" else -1,  # Adjust vmin for no_self plot
+                       vmax=1,
+                       aspect='equal')
+
+        # Add colorbar (hide -1 from colorbar in no_self plot)
+        if suffix == "no_self":
+            norm = plt.Normalize(0, 1)
+            sm = plt.cm.ScalarMappable(cmap='YlOrRd', norm=norm)
+            plt.colorbar(sm, ax=ax).set_label('Transition Probability')
+        else:
+            plt.colorbar(im, ax=ax).set_label('Transition Probability')
+
+        # Add text annotations
+        n_states = matrix.shape[0]
+        for i in range(n_states):
+            for j in range(n_states):
+                if suffix == "no_self" and i == j:
+                    text_color = 'white'  # White text on black diagonal
+                else:
+                    text_color = 'black' if matrix[i, j] < 0.5 else 'white'
+
+                text = ax.text(j, i, f'{matrix[i, j]:.3f}',
+                               ha='center',
+                               va='center',
+                               color=text_color)
+
+        # Customize ticks
+        ax.set_xticks(np.arange(n_states))
+        ax.set_yticks(np.arange(n_states))
+        ax.set_xticklabels([f'State {i + 1}' for i in range(n_states)])
+        ax.set_yticklabels([f'State {i + 1}' for i in range(n_states)])
+
+        # Rotate x-axis labels
+        plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+
+        # Add labels and title
+        ax.set_xlabel('To State')
+        ax.set_ylabel('From State')
+        title = "State Transition Probabilities" if suffix == "all" else "Non-Self State Transition Probabilities"
+        ax.set_title(f'{title} - {protein_name}')
+
+        # Adjust layout
+        plt.tight_layout()
+
+        # Save outputs
+        plot_path = os.path.join(save_dir, f"{protein_name}_transition_matrix_{suffix}.png")
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        # Save to CSV
+        csv_path = os.path.join(save_dir, f"{protein_name}_transition_matrix_{suffix}.csv")
+        pd.DataFrame(matrix,
+                     index=[f"State {i + 1}" for i in range(n_states)],
+                     columns=[f"State {i + 1}" for i in range(n_states)]).to_csv(csv_path)
+
+        print(f"Saved {suffix} transition matrix plot to: {plot_path}")
+        print(f"Saved {suffix} transition matrix to: {csv_path}")
+
+
 def calculate_state_attention_maps(attentions: List[np.ndarray],
                                    neighbor_indices: List[np.ndarray],
                                    state_assignments: List[np.ndarray],
@@ -619,9 +777,10 @@ def generate_state_structures(traj_folder: str,
                               state_assignments: List[np.ndarray],
                               save_dir: str,
                               protein_name: str,
-                              stride: int = 10) -> List[str]:
+                              stride: int = 10,
+                              n_structures: int = 10) -> Dict[int, List[str]]:
     """
-    Generate representative PDB structures for each conformational state from multiple trajectories.
+    Generate multiple representative PDB structures for each conformational state.
 
     Parameters
     ----------
@@ -637,11 +796,14 @@ def generate_state_structures(traj_folder: str,
         Name of the protein for file naming
     stride : int, optional
         Load every nth frame to reduce memory usage (default: 10)
+    n_structures : int, optional
+        Number of structures to generate per state (default: 10)
 
     Returns
     -------
-    List[str]
-        Paths to the generated PDB files
+    Dict[int, List[str]]
+        Dictionary mapping state numbers to lists of PDB file paths,
+        sorted by similarity to average structure
     """
     # Get trajectory files
     traj_pattern = os.path.join(traj_folder, "r?", "traj*")
@@ -667,7 +829,7 @@ def generate_state_structures(traj_folder: str,
     strided_assignments = []
     current_idx = 0
     for count in frame_counts:
-        strided_count = (count + stride - 1) // stride  # ceiling division
+        strided_count = (count + stride - 1) // stride
         if current_idx + strided_count <= len(state_assignments[0]):
             strided_assignments.append(state_assignments[0][current_idx:current_idx + strided_count])
         current_idx += strided_count
@@ -675,10 +837,16 @@ def generate_state_structures(traj_folder: str,
     # Flatten state assignments
     all_states = np.concatenate(strided_assignments)
     unique_states = np.unique(all_states)
-    output_files = []
+    state_structures = {}
 
     print("Processing states...")
     for state in tqdm(unique_states, desc="Generating state structures"):
+        state_structures[state] = []
+
+        # Create state-specific directory
+        state_dir = os.path.join(save_dir, f"state_{state + 1}")
+        os.makedirs(state_dir, exist_ok=True)
+
         # Get frames belonging to this state
         state_frames = np.where(all_states == state)[0]
 
@@ -690,17 +858,258 @@ def generate_state_structures(traj_folder: str,
 
         # Calculate average structure
         average_structure = state_traj.superpose(state_traj[0])
-
-        # Find frame closest to average
         average_xyz = average_structure.xyz.mean(axis=0)
+
+        # Calculate distances to average for all frames
         distances = np.sqrt(np.sum((state_traj.xyz - average_xyz) ** 2, axis=(1, 2)))
-        representative_frame = state_frames[np.argmin(distances)]
 
-        # Save representative structure
-        output_file = os.path.join(save_dir, f"{protein_name}_state_{state + 1}.pdb")
-        combined_traj[representative_frame].save_pdb(output_file)
-        output_files.append(output_file)
+        # Get indices of n closest frames, sorted by distance
+        n_structures = min(n_structures, len(state_frames))
+        closest_indices = np.argsort(distances)[:n_structures]
 
-        print(f"State {state + 1}: {len(state_frames)} frames, saved to {output_file}")
+        # Save structures with distance in filename
+        for rank, idx in enumerate(closest_indices):
+            frame_idx = state_frames[idx]
+            distance = distances[idx]
 
-    return output_files
+            output_file = os.path.join(
+                state_dir,
+                f"{protein_name}_rank_{rank + 1}_dist_{distance:.3f}.pdb"
+            )
+
+            combined_traj[frame_idx].save_pdb(output_file)
+            state_structures[state].append(output_file)
+
+        print(f"State {state + 1}: Generated {len(closest_indices)} structures in {state_dir}")
+
+    return state_structures
+
+
+def visualize_state_ensemble(state_structures: Dict[int, List[str]],
+                             save_dir: str,
+                             protein_name: str):
+    """
+    Create PyMOL visualizations of state ensembles from multiple angles.
+
+    Parameters
+    ----------
+    state_structures : Dict[int, List[str]]
+        Dictionary mapping state numbers to lists of PDB file paths
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein for file naming
+    """
+
+    # Define viewing angles (front, side, top)
+    views = {
+        'front': (0, 0, 0),
+        'side': (90, 0, 0),
+        'top': (0, 90, 0),
+        'iso': (30, 30, 0)
+    }
+
+    # Initialize PyMOL in headless mode
+    pymol.finish_launching(['pymol', '-qc'])
+
+    for state_num, structures in state_structures.items():
+        print(f"Processing state {state_num + 1}...")
+
+        # Create state-specific directory for images
+        state_dir = os.path.join(save_dir, f"state_{state_num + 1}")
+        img_dir = os.path.join(state_dir, "images")
+        os.makedirs(img_dir, exist_ok=True)
+
+        # Initialize for each state
+        cmd.reinitialize()
+
+        # Set up visualization parameters
+        cmd.bg_color("white")
+        cmd.set("ray_opaque_background", "off")
+        cmd.set("cartoon_fancy_helices", 1)
+        cmd.set("cartoon_transparency", 0)
+        cmd.set("ray_shadows", 0)
+
+        # Load and process structures
+        for i, pdb_file in enumerate(structures):
+            dist = float(pdb_file.split('_dist_')[-1].replace('.pdb', ''))
+            opacity = 1.0 - (i / len(structures))
+            name = f"state_{state_num + 1}_rank_{i}"
+
+            cmd.load(pdb_file, name)
+            cmd.show_as("cartoon", name)
+            cmd.set("transparency", 1 - opacity, name)
+            cmd.color("marine", f"{name} and ss h")
+            cmd.color("forest", f"{name} and ss s")
+            cmd.color("wheat", f"{name} and ss l")
+
+            if i > 0:
+                cmd.align(name, f"state_{state_num + 1}_rank_0")
+
+        # Save combined state
+        combined_pdb = os.path.join(state_dir, f"{protein_name}_state_{state_num + 1}_ensemble.pdb")
+        cmd.save(combined_pdb, f"state_{state_num + 1}_rank_*")
+
+        # Generate images from different angles
+        for view_name, (x, y, z) in views.items():
+            cmd.rotate('x', x)
+            cmd.rotate('y', y)
+            cmd.rotate('z', z)
+            cmd.center()
+            cmd.zoom()
+
+            img_file = os.path.join(img_dir, f"{protein_name}_state_{state_num + 1}_{view_name}.png")
+            cmd.ray(1200, 1200)
+            cmd.png(img_file, dpi=300, ray=1)
+            print(f"Saved {view_name} view to {img_file}")
+
+        cmd.delete("all")
+
+    # Clean up PyMOL session without killing the process
+    #cmd.delete("all")
+    #cmd.reinitialize()
+
+
+def plot_state_network(probs: List[np.ndarray],
+                      state_structures: Dict[int, List[str]],
+                      save_dir: str,
+                      protein_name: str,
+                      lag_time: int = 1):
+    """
+    Create a network plot showing state transitions with representative structures.
+
+    Parameters
+    ----------
+    probs : List[np.ndarray]
+        List of state probability trajectories
+    state_structures : Dict[int, List[str]]
+        Dictionary mapping state numbers to lists of PDB file paths
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein
+    lag_time : int
+        Lag time for transition matrix calculation
+    """
+
+    # Calculate matrices and populations
+    trans_matrix, trans_matrix_no_self = calculate_transition_matrices(probs, lag_time)
+
+    state_pops = []
+    for prob_traj in probs:
+        states = np.argmax(prob_traj, axis=1)
+        unique, counts = np.unique(states, return_counts=True)
+        pop = np.zeros(prob_traj.shape[1])
+        pop[unique] = counts
+        state_pops.append(pop / len(states))
+    avg_state_pops = np.mean(state_pops, axis=0)
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(24, 24))
+
+    # Setup node positions with larger radius
+    n_states = trans_matrix.shape[0]
+    angles = np.linspace(0, 2 * np.pi, n_states, endpoint=False)
+    radius = 2.0  # Increased radius
+    pos = {i: (radius * np.cos(angle), radius * np.sin(angle))
+           for i, angle in enumerate(angles)}
+
+    # Draw transitions with separate curves for forward/backward
+    transition_labels = {}
+    for i in range(n_states):
+        for j in range(n_states):
+            if i != j and trans_matrix_no_self[i, j] > 0:
+                # Forward transitions (blue, outer curve)
+                if i < j:
+                    color = 'blue'
+                    rad = -0.3
+                # Backward transitions (red, inner curve)
+                else:
+                    color = 'red'
+                    rad = -0.3
+
+                # Draw thicker arrows based on probability
+                arrow = ax.annotate("",
+                                    xy=pos[j], xycoords='data',
+                                    xytext=pos[i], textcoords='data',
+                                    arrowprops=dict(arrowstyle="-|>",
+                                                    connectionstyle=f"arc3,rad={rad}",
+                                                    color=color,
+                                                    lw=4 * trans_matrix_no_self[i, j] + 2,  # Thicker arrows
+                                                    alpha=0.7,
+                                                    mutation_scale=20))  # Controls arrowhead size
+
+                # Store transition information
+                state_pair = tuple(sorted([i, j]))
+                if state_pair not in transition_labels:
+                    transition_labels[state_pair] = []
+                transition_labels[state_pair].append({
+                    'text': f'S{i + 1}→S{j + 1}: {trans_matrix_no_self[i, j]:.2f}',
+                    'color': color
+                })
+    # Add labels for all transitions
+    for (i, j), labels in transition_labels.items():
+        # Calculate middle point
+        mid_x = (pos[i][0] + pos[j][0]) / 2
+        mid_y = (pos[i][1] + pos[j][1]) / 2
+
+        # Calculate perpendicular offset
+        dx = pos[j][0] - pos[i][0]
+        dy = pos[j][1] - pos[i][1]
+        angle = np.arctan2(dy, dx)
+        perp_angle = angle + np.pi / 2
+
+        offset = 0.2
+        offset_x = offset * np.cos(perp_angle)
+        offset_y = offset * np.sin(perp_angle)
+
+        # Stack labels vertically
+        for idx, label in enumerate(labels):
+            vertical_spacing = 0.15  # Adjust this value to control vertical spacing
+            y_offset = vertical_spacing * (idx - (len(labels) - 1) / 2)
+
+            ax.text(mid_x + offset_x,
+                    mid_y + offset_y + y_offset,
+                    label['text'],
+                    ha='center', va='center',
+                    color=label['color'],
+                    bbox=dict(facecolor='white', alpha=0.7),
+                    fontsize=12)
+
+    # Draw nodes and add structure images
+    for i in range(n_states):
+        # Load and display structure image
+        img_path = os.path.join(save_dir, f"state_{i + 1}/images/{protein_name}_state_{i + 1}_iso.png")
+        if os.path.exists(img_path):
+            img = imread(img_path)
+            img_size = 0.8  # Increased image size
+            ax.imshow(img,
+                      extent=[pos[i][0] - img_size / 2, pos[i][0] + img_size / 2,
+                              pos[i][1] - img_size / 2, pos[i][1] + img_size / 2])
+
+        # Add state label and population with larger font
+        ax.text(pos[i][0], pos[i][1] - 0.5,
+                f'State {i + 1}\n{avg_state_pops[i]:.1%}',
+                ha='center', va='center',
+                bbox=dict(facecolor='white', alpha=0.7),
+                fontsize=14)
+
+    # Add legend with larger font
+    ax.plot([], [], color='blue', label='Forward transitions', linewidth=4)
+    ax.plot([], [], color='red', label='Backward transitions', linewidth=4)
+    ax.legend(loc='upper right', fontsize=12)
+
+    # Increase plot bounds
+    ax.set_xlim(-2.8, 2.8)
+    ax.set_ylim(-2.8, 2.8)
+    plt.axis('equal')
+    plt.axis('off')
+    plt.title(f'State Transition Network - {protein_name}', fontsize=16)
+
+    # Save plot
+    plot_path = os.path.join(save_dir, f"{protein_name}_state_network.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    print(f"Saved state network plot to: {plot_path}")
+

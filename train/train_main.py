@@ -497,6 +497,14 @@ def run_training(args):
         num_neighbors=args.num_neighbors
     )
 
+    # Calculate and plot transition probabilities
+    plot_transition_probabilities(
+        probs=probs,
+        save_dir=args.save_folder,
+        protein_name=args.protein_name,
+        lag_time=20 #TODO: args.tau  # You can adjust this parameter or add it to args
+    )
+
     # Use the indices already loaded in trainer
     neighbor_indices = [trainer.inds1]
 
@@ -522,19 +530,6 @@ def run_training(args):
     # Process attention maps
     # Get state assignments
     state_assignments = [np.argmax(traj, axis=1) for traj in probs]
-
-    # Get state structures
-    print("Generating state structures")
-    # After getting state assignments
-    state_structures = generate_state_structures(
-        traj_folder=args.traj_folder,
-        topology_file=os.path.join(os.path.dirname(args.data_path), f"{args.protein_name}.pdb"),
-        state_assignments=state_assignments,
-        save_dir=args.save_folder,
-        protein_name=args.protein_name,
-        stride=1  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
-    )
-    print("Representative state structures generated")
 
     # Calculate attention maps with pre-calculated neighbor indices
     state_attention_maps, state_populations = calculate_state_attention_maps(
@@ -562,6 +557,37 @@ def run_training(args):
         save_path=os.path.join(args.save_folder, f'{args.protein_name}_attention_weights.png')
     )
     print("Attention analysis complete")
+
+    # Get state structures
+    print("Generating state structures")
+    # After getting state assignments
+    state_structures = generate_state_structures(
+        traj_folder=args.traj_folder,
+        topology_file=os.path.join(os.path.dirname(args.data_path), f"{args.protein_name}.pdb"),
+        state_assignments=state_assignments,
+        save_dir=args.save_folder,
+        protein_name=args.protein_name,
+        stride=1,  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
+        n_structures=10
+    )
+
+    visualize_state_ensemble(
+        state_structures=state_structures,
+        save_dir=args.save_folder,
+        protein_name=args.protein_name
+    )
+    print("Representative state structures generated")
+
+    # After analyzing model outputs and generating state structures
+    plot_state_network(
+        probs=probs,
+        state_structures=state_structures,  # From generate_state_structures
+        save_dir=args.save_folder,
+        protein_name=args.protein_name,
+        lag_time=args.tau
+    )
+    print("network of states plotted ")
+
 
     return {
         'model': model,
