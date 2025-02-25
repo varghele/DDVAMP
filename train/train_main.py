@@ -172,7 +172,7 @@ class RevVAMPTrainer:
             lobe_timelagged=lobe_timelagged,
             vampu=vlu,
             vamps=vls,
-            learning_rate=self.args.lr,
+            learning_rate=self.args.learning_rate_a,
             device=self.device,
             activation_vamps=ExpActivation(),
             activation_vampu=ExpActivation(),
@@ -293,8 +293,6 @@ class RevVAMPTrainer:
             self.log_pth
         )
 
-        self.vampnet.set_optimizer_lr(0.001)
-
     def train_vamp(self) -> Tuple[RevVAMPNet, int]:
         """Train the VAMPNet model with optional VAMPCE pre-training."""
         n_OOM = 0
@@ -317,6 +315,10 @@ class RevVAMPTrainer:
 
             # Pre-training loop
             print("Entering Pre-Training: Training CHI")
+
+            # Set learning rate to learning rate A
+            self.vampnet.set_optimizer_lr(self.args.learning_rate_a)
+
             for epoch in tqdm(range(pre_epoch)):
                 try:
                     for batch_0, batch_t in self.loader_train:
@@ -362,11 +364,17 @@ class RevVAMPTrainer:
                 self.vampnet.lobe_timelagged.load_state_dict(deepcopy(best_dict))
             print(f"VAMP2 best score: {early_stopping.val_loss_min:.4f}")
 
+        # Establish learning rate A for auxiliary networks
+        self.vampnet.set_optimizer_lr(self.args.learning_rate_a)
+
         # Train auxiliary networks
         self.train_US(pre_epoch)
 
         # Train full network
         print("Training full network...")
+        # Set learning rate to learning rate B for full network training
+        self.vampnet.set_optimizer_lr(self.args.learning_rate_b)
+
         all_train_epo = 0
         best_model = None
         early_stopping = EarlyStopping(
@@ -377,9 +385,9 @@ class RevVAMPTrainer:
         )
 
         for epoch in tqdm(range(self.args.epochs)):
-            #if epoch == 100:
-            #    for param_group in self.vampnet.optimizer.param_groups:
-            #        param_group['lr'] = 0.001
+            # Reduce larning rate to converge training
+            if epoch == 100:
+                self.vampnet.reduce_optimizer_lr(0.2)
 
             try:
                 batch_count = 0
@@ -502,7 +510,7 @@ def run_training(args):
         probs=probs,
         save_dir=args.save_folder,
         protein_name=args.protein_name,
-        lag_time=20 #TODO: args.tau  # You can adjust this parameter or add it to args
+        lag_time=args.tau #20 #TODO: args.tau  # You can adjust this parameter or add it to args
     )
 
     # Use the indices already loaded in trainer
@@ -510,7 +518,7 @@ def run_training(args):
 
     # Run Chapman-Kolmogorov test
     steps = 10
-    tau_msm = 20 #TODO: this is args.tau
+    tau_msm = args.tau #20 #TODO: this is args.tau
     predicted, estimated = get_ck_test(probs, steps, tau_msm)
 
     # Plot and save CK test results
@@ -540,6 +548,15 @@ def run_training(args):
         num_atoms=args.num_atoms
     )
 
+    # Save state assignments and attention maps and state_populations
+    save_state_data(
+        state_assignments=state_assignments,
+        state_attention_maps=state_attention_maps,
+        state_populations=state_populations,
+        save_path=args.save_folder,
+        protein_name=args.protein_name
+    )
+
     # Plot attention maps
     plot_state_attention_maps(
         adjs=state_attention_maps,
@@ -567,7 +584,8 @@ def run_training(args):
         state_assignments=state_assignments,
         save_dir=args.save_folder,
         protein_name=args.protein_name,
-        stride=1,  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
+        stride=1,#args.stride,  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
+        # TODO: This needs to be a separate argument than stride
         n_structures=10
     )
 
@@ -577,6 +595,16 @@ def run_training(args):
         protein_name=args.protein_name
     )
     print("Representative state structures generated")
+
+    # Generate state structures with attention coloring
+    # Visualize existing structures with attention coloring
+    visualize_attention_ensemble(
+        state_structures=state_structures,
+        state_attention_maps=state_attention_maps,
+        save_path=os.path.join(args.save_folder, f"{args.protein_name}_attention.pdb"),
+        protein_name=args.protein_name
+    )
+    print("Attention-colored visualizations generated")
 
     # After analyzing model outputs and generating state structures
     plot_state_network(

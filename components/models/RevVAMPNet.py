@@ -154,6 +154,31 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin, nn.Module):
         if hasattr(self, '_step'):
             print(f"Step {self._step}: Learning rate set to {new_lr}")
 
+    def reduce_optimizer_lr(self, multiplier: float) -> None:
+        """
+        Reduce the current learning rate by multiplying it with the given factor.
+
+        Args:
+            multiplier (float): Factor to multiply the current learning rate with (0 < multiplier < 1)
+
+        Example:
+            vampnet.reduce_optimizer_lr(0.2)  # Reduces current learning rate by factor of 0.2
+        """
+        if not hasattr(self, 'optimizer'):
+            raise AttributeError("No optimizer found. Initialize optimizer before modifying learning rate.")
+
+        if not 0 < multiplier < 1:
+            raise ValueError("Multiplier must be between 0 and 1 to reduce learning rate.")
+
+        for param_group in self.optimizer.param_groups:
+            current_lr = param_group['lr']
+            new_lr = current_lr * multiplier
+            param_group['lr'] = new_lr
+
+        # Optional: log the learning rate change
+        if hasattr(self, '_step'):
+            print(f"Step {self._step}: Learning rate reduced from {current_lr:.6f} to {new_lr:.6f}")
+
     def parameters(self, recurse: bool = True):
         """Return an iterator over module parameters.
 

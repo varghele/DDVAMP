@@ -320,12 +320,12 @@ def analyze_model_outputs(
         attentions.append(attn_tmp)
 
     # Save all results
-    np.savez(os.path.join(save_folder, 'transformed.npz'), probs)
+    np.savez(os.path.join(save_folder, 'transformed_traj.npz'), probs)
     np.savez(os.path.join(save_folder, 'embeddings.npz'), embeddings)
     np.savez(os.path.join(save_folder, 'attention.npz'), attentions)
 
     # Save first trajectory results separately
-    np.savez(os.path.join(save_folder, 'transformed_0.npz'), probs[0])
+    np.savez(os.path.join(save_folder, 'transformed_0_traj.npz'), probs[0])
     np.savez(os.path.join(save_folder, 'embeddings_0.npz'), embeddings[0])
     np.savez(os.path.join(save_folder, 'attention_0.npz'), attentions[0])
 
@@ -334,6 +334,68 @@ def analyze_model_outputs(
     print(f"Number of trajectories: {len(probs)}")
 
     return probs, embeddings, attentions
+
+
+def save_state_data(state_assignments: List[np.ndarray],
+                    state_attention_maps: np.ndarray,  # Changed type hint
+                    state_populations: np.ndarray,
+                    save_path: str,
+                    protein_name: str):
+    """
+    Save state assignments, attention maps, and populations to files.
+
+    Parameters
+    ----------
+    state_assignments : List[np.ndarray]
+        List of state assignment arrays for each trajectory
+    state_attention_maps : np.ndarray
+        Attention maps for each state [n_states, n_atom, n_atom]
+    state_populations : np.ndarray
+        Array of state populations
+    save_path : str
+        Base path to save the files
+    protein_name : str
+        Name of the protein for file naming
+    """
+    # Create data directory using save_path
+    data_dir = os.path.join(save_path, "state_data")
+    os.makedirs(data_dir, exist_ok=True)
+
+    # Save state assignments
+    for i, assignments in enumerate(state_assignments):
+        filename = os.path.join(data_dir, f"{protein_name}_state_assignments_traj{i + 1}.npy")
+        np.save(filename, assignments)
+        print(f"Saved state assignments for trajectory {i + 1} to {filename}")
+
+    # Save attention maps
+    for state_idx in range(len(state_attention_maps)):
+        filename = os.path.join(data_dir, f"{protein_name}_attention_map_state{state_idx + 1}.npy")
+        np.save(filename, state_attention_maps[state_idx])
+        print(f"Saved attention map for state {state_idx + 1} to {filename}")
+
+    # Save state populations
+    filename = os.path.join(data_dir, f"{protein_name}_state_populations.npy")
+    np.save(filename, state_populations)
+    print(f"Saved state populations to {filename}")
+
+    # Save as text files for easier viewing
+    # State populations
+    txt_filename = os.path.join(data_dir, f"{protein_name}_state_populations.txt")
+    with open(txt_filename, 'w') as f:
+        f.write("State Populations:\n")
+        for i, pop in enumerate(state_populations):
+            f.write(f"State {i + 1}: {pop:.4f}\n")
+
+    # Summary statistics
+    summary_filename = os.path.join(data_dir, f"{protein_name}_state_summary.txt")
+    with open(summary_filename, 'w') as f:
+        f.write(f"State Analysis Summary for {protein_name}\n")
+        f.write("=" * 50 + "\n\n")
+        f.write("Number of trajectories: {}\n".format(len(state_assignments)))
+        f.write("Number of states: {}\n".format(len(state_populations)))
+        f.write("\nState Populations:\n")
+        for i, pop in enumerate(state_populations):
+            f.write(f"State {i + 1}: {pop:.4f}\n")
 
 
 def calculate_transition_matrices(prob_trajectories: List[np.ndarray], lag_time: int = 1) -> Tuple[
@@ -968,7 +1030,99 @@ def visualize_state_ensemble(state_structures: Dict[int, List[str]],
     # Clean up PyMOL session without killing the process
     cmd.delete("all")
     cmd.reinitialize()
-    cmd.quit()
+    #cmd.quit()
+
+
+def visualize_attention_ensemble(state_structures: Dict[int, List[str]],
+                                 state_attention_maps: np.ndarray,
+                                 save_path: str,
+                                 protein_name: str):
+    """
+    Create PyMOL visualizations of existing state structures colored by attention.
+    """
+    base_dir = os.path.dirname(save_path)
+    views = {
+        'front': (0, 0, 0),
+        'side': (90, 0, 0),
+        'top': (0, 90, 0),
+        'iso': (30, 30, 0)
+    }
+
+    # Calculate scaled attention scores for each state
+    state_residue_attention = {}
+    for state in range(len(state_attention_maps)):
+        scores = scale(state_attention_maps[state].sum(axis=0))
+        state_residue_attention[state] = scores
+
+    # Initialize PyMOL in headless mode
+    pymol.finish_launching(['pymol', '-qc'])
+
+    for state_num, structures in state_structures.items():
+        print(f"Processing state {state_num + 1} with attention coloring...")
+
+        state_dir = os.path.join(base_dir, f"state_{state_num + 1}")
+        img_dir = os.path.join(state_dir, "attention_images")
+        os.makedirs(img_dir, exist_ok=True)
+
+        # Initialize for each state
+        cmd.reinitialize()
+
+        # Set up visualization parameters
+        cmd.bg_color("white")
+        cmd.set("ray_opaque_background", "off")
+        cmd.set("cartoon_fancy_helices", 1)
+        cmd.set("cartoon_transparency", 0)
+        cmd.set("ray_shadows", 0)
+
+        # Load existing structures and apply attention coloring
+        for i, pdb_file in enumerate(structures):
+            if i == 0:
+                opacity = 1.0  # First structure fully opaque
+            else:
+                # Exponential decay starting from 0.7
+                decay_rate = 1.5  # Adjust this value to control decay speed
+                opacity = 0.5 * np.exp(-decay_rate * (i - 1))
+            name = f"state_{state_num + 1}_rank_{i}"
+
+            # Load structure
+            cmd.load(pdb_file, name)
+            cmd.show_as("cartoon", name)
+            cmd.set("transparency", 1 - opacity, name)
+
+            # Apply attention values as B-factors
+            for res_idx, attention in enumerate(state_residue_attention[state_num]):
+                b_factor = attention * 100
+                cmd.alter(f"{name} and resi {res_idx + 1}", f"b={b_factor}")
+
+            # Color by B-factor (attention values)
+            cmd.spectrum("b", "blue_white_red", name)
+
+            if i > 0:
+                cmd.align(name, f"state_{state_num + 1}_rank_0")
+
+        # Save combined state
+        combined_pdb = os.path.join(state_dir, f"{protein_name}_state_{state_num + 1}_attention_ensemble.pdb")
+        cmd.save(combined_pdb, f"state_{state_num + 1}_rank_*")
+
+        # Generate images from different angles
+        for view_name, (x, y, z) in views.items():
+            cmd.rotate('x', x)
+            cmd.rotate('y', y)
+            cmd.rotate('z', z)
+            cmd.center()
+            cmd.zoom()
+
+            img_file = os.path.join(img_dir, f"{protein_name}_state_{state_num + 1}_{view_name}_attention.png")
+            cmd.ray(1200, 1200)
+            cmd.png(img_file, dpi=300, ray=1)
+            print(f"Saved {view_name} attention view to {img_file}")
+
+        cmd.delete("all")
+
+    # Clean up PyMOL session without killing the process
+    cmd.delete("all")
+    cmd.reinitialize()
+    #cmd.quit()
 
 
 def plot_state_network(probs: List[np.ndarray],

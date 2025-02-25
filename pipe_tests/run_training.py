@@ -88,7 +88,8 @@ def get_hardcoded_args():
         #"--attention_pool",
 
         # Training Parameters
-        "--lr", "0.001",
+        "--learning_rate_a", "0.0005",
+        "--learning_rate_b", "0.0001",
         "--tau", "20",
         "--batch_size", "500",
         "--val_frac", "0.2",
@@ -196,7 +197,8 @@ def main():
     print(f"Using attention pooling: {args.attention_pool}")
 
     print("\nTraining Parameters:")
-    print(f"Learning rate: {args.lr}")
+    print(f"Learning rate A: {args.learning_rate_a}")
+    print(f"Learning rate B: {args.learning_rate_b}")
     print(f"Batch size: {args.batch_size}")
     print(f"Epochs: {args.epochs}")
     print(f"Device: {args.device}")

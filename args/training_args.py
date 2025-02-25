@@ -35,7 +35,8 @@ def buildParser():
 
 	# Training Parameters
 	training_group = parser.add_argument_group('Training Parameters')
-	training_group.add_argument('--lr', type=float, default=0.01, help='Initial learning rate')
+	training_group.add_argument('--learning_rate_a', type=float, default=0.0005, help='Learning rate A for GC, U, and S layers')
+	training_group.add_argument('--learning_rate_b', type=float, default=0.0001, help='Learning rate for full network training')
 	training_group.add_argument('--tau', type=int, default=1, help='Lag time for the model')
 	training_group.add_argument('--batch_size', type=int, default=32, help='Training batch size')
 	training_group.add_argument('--val_frac', type=float, default=0.2, help='Validation fraction')
