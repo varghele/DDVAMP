@@ -947,6 +947,78 @@ def generate_state_structures(traj_folder: str,
     return state_structures
 
 
+def save_attention_colored_structures(state_structures: Dict[int, List[str]],
+                                      state_attention_maps: np.ndarray,
+                                      save_dir: str,
+                                      protein_name: str) -> Dict[int, List[str]]:
+    """
+    Save new versions of existing state structures with attention values as B-factors.
+
+    Parameters
+    ----------
+    state_structures : Dict[int, List[str]]
+        Dictionary mapping state numbers to lists of PDB file paths
+    state_attention_maps : np.ndarray
+        Attention maps for each state [n_states, n_atoms, n_atoms]
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein for file naming
+
+    Returns
+    -------
+    Dict[int, List[str]]
+        Dictionary mapping state numbers to lists of attention-colored PDB file paths
+    """
+    # Calculate scaled attention scores for each state
+    state_residue_attention = {}
+    for state in range(len(state_attention_maps)):
+        scores = scale(state_attention_maps[state].sum(axis=0))
+        state_residue_attention[state] = scores
+
+    attention_structures = {}
+
+    for state_num, structures in state_structures.items():
+        attention_structures[state_num] = []
+
+        state_dir = os.path.join(save_dir, f"state_{state_num + 1}_attention")
+        os.makedirs(state_dir, exist_ok=True)
+
+        for pdb_file in structures:
+            traj = md.load(pdb_file)
+
+            base_name = os.path.basename(pdb_file)
+            new_name = base_name.replace('.pdb', '_attention.pdb')
+            output_file = os.path.join(state_dir, new_name)
+
+            with open(output_file, 'w') as f:
+                for atom in traj.topology.atoms:
+                    res_idx = atom.residue.index
+                    attention_value = state_residue_attention[state_num][res_idx]
+                    b_factor = attention_value * 100
+
+                    xyz = traj.xyz[0, atom.index]
+
+                    # Convert chain to string and default to 'A' if None
+                    chain = str(atom.residue.chain) if atom.residue.chain else 'A'
+
+                    f.write("ATOM  {:5d}  {:<4s}{:>3s} {}{:4d}    {:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}\n".format(
+                        atom.index,
+                        atom.name,
+                        atom.residue.name,
+                        chain,
+                        atom.residue.resSeq,
+                        xyz[0], xyz[1], xyz[2],
+                        1.00,
+                        b_factor
+                    ))
+
+            attention_structures[state_num].append(output_file)
+            print(f"Saved attention-colored structure to {output_file}")
+
+    return attention_structures
+
+
 def visualize_state_ensemble(state_structures: Dict[int, List[str]],
                              save_dir: str,
                              protein_name: str):
@@ -1060,7 +1132,7 @@ def visualize_attention_ensemble(state_structures: Dict[int, List[str]],
     for state_num, structures in state_structures.items():
         print(f"Processing state {state_num + 1} with attention coloring...")
 
-        state_dir = os.path.join(base_dir, f"state_{state_num + 1}")
+        state_dir = os.path.join(base_dir, f"state_{state_num + 1}_attention")
         img_dir = os.path.join(state_dir, "attention_images")
         os.makedirs(img_dir, exist_ok=True)
 

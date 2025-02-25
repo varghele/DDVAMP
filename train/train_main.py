@@ -597,6 +597,13 @@ def run_training(args):
     print("Representative state structures generated")
 
     # Generate state structures with attention coloring
+    save_attention_colored_structures(
+        state_structures=state_structures,
+        state_attention_maps=state_attention_maps,
+        save_dir=args.save_folder,
+        protein_name=args.protein_name
+    )
+
     # Visualize existing structures with attention coloring
     visualize_attention_ensemble(
         state_structures=state_structures,
