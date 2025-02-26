@@ -93,6 +93,22 @@ class TrajectoryProcessor:
 
         return residue, pair
 
+    def _infer_timestep(self, traj_files: List[str], pdb_file: str) -> float:
+        """Infer timestep from trajectories"""
+        # Load first trajectory to check timestep
+        first_traj = md.load(traj_files[0], top=pdb_file)
+
+        if hasattr(first_traj, 'timestep'):
+            timestep = first_traj.timestep
+        elif hasattr(first_traj, 'time') and len(first_traj.time) > 1:
+            # Calculate timestep from time differences
+            timestep = first_traj.time[1] - first_traj.time[0]
+        else:
+            raise ValueError("Could not infer timestep from trajectory. Please specify timestep manually.")
+
+        print(f"Inferred timestep: {timestep} ps")
+        return timestep
+
     def _load_trajectory(self, traj_files: List[str], pdb_file: str):
         """Load trajectory files"""
         valid_trajs = [f for f in traj_files if f.endswith(('.xtc', '.trr', '.dcd', '.nc', '.h5'))]
@@ -101,7 +117,7 @@ class TrajectoryProcessor:
 
         feat = pe.coordinates.featurizer(pdb_file)
         feat.add_residue_mindist()
-        return pe.coordinates.source(valid_trajs, feat)
+        return pe.coordinates.source(valid_trajs, feat, stride=self.args.stride)
 
     def get_neighbors(self, coords: Union[List[np.ndarray], np.ndarray], pair_list: List[Tuple[int, int]]) -> Tuple[
         np.ndarray, np.ndarray]:
@@ -165,12 +181,18 @@ class TrajectoryProcessor:
             lengths = [self.data['inpcon'][k].trajectory_lengths()]
             nframes = self.data['inpcon'][k].trajectory_lengths().sum()
 
+            # Infer timestep from trajectories
+            timestep = self._infer_timestep(
+                glob(os.path.join(self.args.traj_folder, "r?", "traj*")),
+                os.path.join(self.args.interim_dir, f"{self.args.protein_name}.pdb")
+            )
+
             # Process coordinates
             coords = self.data['inpcon'][k].get_output()
             dists, inds = self.get_neighbors(coords, self.data['pair_list'][k])
 
             # Create subdirectory name based on parameters
-            ns = int(self.args.stride * 0.2)
+            ns = int(self.args.stride * timestep)
             subdir_name = f"{k}_{self.args.num_neighbors}nbrs_{ns}ns"
             output_dir = os.path.join(self.args.interim_dir, subdir_name)
 

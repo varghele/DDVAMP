@@ -9,7 +9,7 @@ from args.pipeline_args import buildParser as buildPipelineParser
 from args.preparation_args import buildParser as buildPrepParser
 from utils.preparation import run_pipeline
 import argparse
-
+from utils.traj_utils import infer_timestep
 
 def get_hardcoded_args():
     # Create parsers
@@ -32,7 +32,7 @@ def get_hardcoded_args():
         #"--topology", "../datasets/ab42/trajectories/trajectories/red/topol.gro",
         #"--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
         "--num-neighbors", "10",
-        "--stride", "5",
+        "--stride", "4",
         "--chunk-size", "5000"
     ]
 
@@ -53,11 +53,14 @@ def main():
     print(f"Stride: {args.stride}")
     print(f"Chunk size: {args.chunk_size}")
 
+    # Infer timestep from trajectories
+    timestep = infer_timestep(args.traj_folder, args.topology)
+
     # Run preparation
     results = run_pipeline(args)
 
     # Get the output directory from results
-    ns = int(args.stride * 0.2)
+    ns = int(args.stride * timestep)
     subdir_name = f"{args.protein_name}_{args.num_neighbors}nbrs_{ns}ns"
     output_dir = os.path.join(args.interim_dir, subdir_name)
 

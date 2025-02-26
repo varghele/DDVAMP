@@ -53,6 +53,7 @@ def buildParser():
 
 	# Data Configuration
 	data_group = parser.add_argument_group('Data Configuration')
+	data_group.add_argument('--n_structures', type=int, default=10, help='Number of generated structures for each state')
 	data_group.add_argument('--data-path', type=str, default='../intermediate/ala_5nbrs_1ns_',
 							help='Data file prefix')
 	data_group.add_argument('--seq_file', type=str, default=None,

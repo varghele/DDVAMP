@@ -20,6 +20,7 @@ import random
 from components.activations.ExpActivation import ExpActivation
 import matplotlib.pyplot as plt
 from utils.vamp_utils import *
+from utils.traj_utils import infer_timestep
 
 # Removing stochasticity, setting seed so training is always the same
 #torch.backends.cudnn.deterministic = True
@@ -54,6 +55,35 @@ class RevVAMPTrainer:
 
         # Infer parameters from input directory path
         self.inferred_params = self._infer_params_from_path(args.data_path)
+
+        # Infer MD timestep
+        try:
+            self.md_timestep = infer_timestep(args.traj_folder, args.topology)
+            print(f"Using MD timestep: {self.md_timestep} ps")
+
+            # Calculate stride from ns value and timestep
+            self.stride = int(self.inferred_params['ns'] / (self.md_timestep / 1000))  # Convert ps to ns
+            print(f"Calculated stride: {self.stride}")
+
+            # Calculate frames_lag for desired lag time
+            desired_lag_ns = self.args.tau  # e.g., 20 ns
+            timestep_ns = self.md_timestep / 1000  # Convert ps to ns
+            frame_stride = self.stride  # How many MD steps between saved frames
+
+            # Calculate how many frames we need to skip to get desired lag time
+            # This frames_lag calculates the necessary lag time args.tau in frames
+            self.frames_lag = int(round(desired_lag_ns / (timestep_ns * frame_stride)))
+
+            print(f"Desired lag time: {desired_lag_ns} ns")
+            print(f"Calculated lag time in frames: {self.frames_lag}")
+            print(f"Actual lag time: {self.frames_lag * frame_stride * timestep_ns} ns")
+
+        except Exception as e:
+            print(f"Warning: Could not infer timestep: {str(e)}")
+            self.md_timestep = None
+            self.stride = None
+            self.frames_lag = None
+
         self.setup_directories()
 
         # Initialize data
@@ -140,7 +170,7 @@ class RevVAMPTrainer:
             myinds1 = torch.from_numpy(inds_sp[i])
             data.append(torch.cat((mydists1, myinds1), axis=-1))
 
-        return TrajectoryDataset.from_trajectories(lagtime=self.args.tau, data=data)
+        return TrajectoryDataset.from_trajectories(lagtime=self.frames_lag, data=data)
 
     def _create_dataloaders(self):
         """Create training and validation dataloaders."""
@@ -177,7 +207,7 @@ class RevVAMPTrainer:
             activation_vamps=ExpActivation(),
             activation_vampu=ExpActivation(),
             num_classes=self.args.num_classes,
-            tau=self.args.tau,
+            tau=self.frames_lag,#self.args.tau,
             optimizer='Adam',
             score_method=self.args.score_method,
         )
@@ -510,7 +540,7 @@ def run_training(args):
         probs=probs,
         save_dir=args.save_folder,
         protein_name=args.protein_name,
-        lag_time=args.tau #20 #TODO: args.tau  # You can adjust this parameter or add it to args
+        lag_time=trainer.frames_lag #20 #TODO: args.tau  # You can adjust this parameter or add it to args
     )
 
     # Use the indices already loaded in trainer
@@ -518,7 +548,7 @@ def run_training(args):
 
     # Run Chapman-Kolmogorov test
     steps = 10
-    tau_msm = args.tau #20 #TODO: this is args.tau
+    tau_msm = trainer.frames_lag #20 #TODO: this is args.tau
     predicted, estimated = get_ck_test(probs, steps, tau_msm)
 
     # Plot and save CK test results
@@ -584,9 +614,9 @@ def run_training(args):
         state_assignments=state_assignments,
         save_dir=args.save_folder,
         protein_name=args.protein_name,
-        stride=1,#args.stride,  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
+        stride=args.state_stride,#args.stride,  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
         # TODO: This needs to be a separate argument than stride
-        n_structures=10
+        n_structures=args.n_structures
     )
 
     visualize_state_ensemble(
@@ -619,7 +649,7 @@ def run_training(args):
         state_structures=state_structures,  # From generate_state_structures
         save_dir=args.save_folder,
         protein_name=args.protein_name,
-        lag_time=args.tau
+        lag_time=trainer.frames_lag
     )
     print("network of states plotted ")
 

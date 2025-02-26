@@ -952,7 +952,8 @@ def save_attention_colored_structures(state_structures: Dict[int, List[str]],
                                       save_dir: str,
                                       protein_name: str) -> Dict[int, List[str]]:
     """
-    Save new versions of existing state structures with attention values as B-factors.
+    Save new versions of existing state structures with attention values as B-factors
+    and corresponding PyMOL visualization scripts.
 
     Parameters
     ----------
@@ -974,47 +975,54 @@ def save_attention_colored_structures(state_structures: Dict[int, List[str]],
     state_residue_attention = {}
     for state in range(len(state_attention_maps)):
         scores = scale(state_attention_maps[state].sum(axis=0))
+        scores = scores * 90  # Scale to 0-90 range
         state_residue_attention[state] = scores
 
     attention_structures = {}
 
     for state_num, structures in state_structures.items():
         attention_structures[state_num] = []
-
         state_dir = os.path.join(save_dir, f"state_{state_num + 1}_attention")
         os.makedirs(state_dir, exist_ok=True)
 
         for pdb_file in structures:
             traj = md.load(pdb_file)
 
+            # Create attention PDB filename
             base_name = os.path.basename(pdb_file)
             new_name = base_name.replace('.pdb', '_attention.pdb')
             output_file = os.path.join(state_dir, new_name)
 
-            with open(output_file, 'w') as f:
-                for atom in traj.topology.atoms:
-                    res_idx = atom.residue.index
-                    attention_value = state_residue_attention[state_num][res_idx]
-                    b_factor = attention_value * 100
+            # Set B-factors
+            b_factors = []
+            for atom in traj.topology.atoms:
+                res_idx = atom.residue.index
+                attention_value = state_residue_attention[state_num][res_idx]
+                b_factors.append(attention_value)
 
-                    xyz = traj.xyz[0, atom.index]
+            # Save PDB with attention B-factors
+            traj_with_bfactors = traj
+            traj_with_bfactors.save_pdb(output_file, bfactors=b_factors)
 
-                    # Convert chain to string and default to 'A' if None
-                    chain = str(atom.residue.chain) if atom.residue.chain else 'A'
+            # Create corresponding PyMOL script
+            script_name = new_name.replace('.pdb', '_view.pml')
+            script_path = os.path.join(state_dir, script_name)
 
-                    f.write("ATOM  {:5d}  {:<4s}{:>3s} {}{:4d}    {:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}\n".format(
-                        atom.index,
-                        atom.name,
-                        atom.residue.name,
-                        chain,
-                        atom.residue.resSeq,
-                        xyz[0], xyz[1], xyz[2],
-                        1.00,
-                        b_factor
-                    ))
+            with open(script_path, 'w') as f:
+                f.write(f"load {new_name}\n")
+                f.write("bg_color white\n")
+                f.write("show cartoon\n")
+                f.write("hide lines\n")
+                f.write("spectrum b, blue_white_red\n")
+                f.write("set ray_shadows, 0\n")
+                f.write("set ray_opaque_background, off\n")
+                f.write("set cartoon_fancy_helices, 1\n")
+                f.write("zoom\n")
+                f.write("ray 1200, 1200\n")
 
             attention_structures[state_num].append(output_file)
             print(f"Saved attention-colored structure to {output_file}")
+            print(f"Saved PyMOL script to {script_path}")
 
     return attention_structures
 
@@ -1153,7 +1161,7 @@ def visualize_attention_ensemble(state_structures: Dict[int, List[str]],
             else:
                 # Exponential decay starting from 0.7
                 decay_rate = 1.5  # Adjust this value to control decay speed
-                opacity = 0.5 * np.exp(-decay_rate * (i - 1))
+                opacity = 0.3 * np.exp(-decay_rate * (i - 1))
             name = f"state_{state_num + 1}_rank_{i}"
 
             # Load structure
