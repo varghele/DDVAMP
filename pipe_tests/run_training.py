@@ -68,16 +68,16 @@ def get_hardcoded_args():
         #"--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
 
         # Model Architecture
-        "--num_classes", "4",
-        "--n_conv", "4",
-        "--h_a", "16",
-        "--h_g", "8",
-        "--hidden", "16",
+        "--num_classes", "8",
+        "--n_conv", "8",
+        "--h_a", "32",
+        "--h_g", "16",
+        "--hidden", "32",
         "--dropout", "0.4",
 
         # Distance Parameters
         "--dmin", "0.0",
-        "--dmax", "3.0",
+        "--dmax", "5.0",
         "--step", "0.2",
 
         # Model Configuration
@@ -93,8 +93,8 @@ def get_hardcoded_args():
         "--tau", "20",
         "--batch_size", "500",
         "--val_frac", "0.2",
-        "--epochs", "100",
-        "--pre-train-epoch", "100",
+        "--epochs", "200",
+        "--pre-train-epoch", "200",
         "--seed", "42",
         "--score_method", "VAMPCE",
 

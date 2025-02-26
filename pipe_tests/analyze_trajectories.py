@@ -52,6 +52,8 @@ def analyze_trajectories(traj_folder: str, topology_file: str):
 
 # Example usage:
 if __name__ == "__main__":
-    traj_folder = "../forked/RevGraphVAMP/trajectories/red/"
-    topology_file = "../forked/RevGraphVAMP/trajectories/red/topol.gro"
+    #traj_folder = "../forked/RevGraphVAMP/trajectories/red/"
+    #topology_file = "../forked/RevGraphVAMP/trajectories/red/topol.gro"
+    traj_folder = "../datasets/ATR/26inactive/26inactive_r5/"
+    topology_file = "../datasets/ATR/26inactive/26inactive_r5/prot.gro"
     analyze_trajectories(traj_folder, topology_file)

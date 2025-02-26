@@ -23,16 +23,19 @@ def get_hardcoded_args():
     # Set your hardcoded values here
     hardcoded_args = [
         # Pipeline args
-        "--protein-name", "ab42",
+        #"--protein-name", "ab42",
+        "--protein-name", "ATR",
         "--steps", "preparation",
 
         # Preparation args
-        "--topology", "../forked/RevGraphVAMP/trajectories/red/topol.gro",
-        "--traj-folder", "../forked/RevGraphVAMP/trajectories/red/",
+        #"--topology", "../forked/RevGraphVAMP/trajectories/red/topol.gro",
+        #"--traj-folder", "../forked/RevGraphVAMP/trajectories/red/",
         #"--topology", "../datasets/ab42/trajectories/trajectories/red/topol.gro",
         #"--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
-        "--num-neighbors", "10",
-        "--stride", "4",
+        "--topology", "../datasets/ATR/prot.gro",
+        "--traj-folder", "../datasets/ATR/",
+        "--num-neighbors", "20",
+        "--stride", "10",
         "--chunk-size", "5000"
     ]
 
@@ -54,14 +57,14 @@ def main():
     print(f"Chunk size: {args.chunk_size}")
 
     # Infer timestep from trajectories
-    timestep = infer_timestep(args.traj_folder, args.topology)
+    #timestep = infer_timestep(args.traj_folder, args.topology)
 
     # Run preparation
-    results = run_pipeline(args)
+    run_pipeline(args)
 
     # Get the output directory from results
-    ns = int(args.stride * timestep)
-    subdir_name = f"{args.protein_name}_{args.num_neighbors}nbrs_{ns}ns"
+    #ns = int(args.stride * timestep)
+    subdir_name = f"{args.protein_name}_{args.num_neighbors}nbrs_{0}ns"
     output_dir = os.path.join(args.interim_dir, subdir_name)
 
     print("\nPreparation completed successfully!")
