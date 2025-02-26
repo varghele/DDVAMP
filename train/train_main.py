@@ -42,8 +42,33 @@ def flush_cuda_cache():
     except Exception as e:
         print(f"Warning: Could not flush CUDA cache: {str(e)}")
 
-def record_result(arg1, arg2):
-    pass
+
+def record_result(message: str, log_path: str):
+    """
+    Record training results to a log file.
+
+    Parameters
+    ----------
+    message : str
+        The message to be logged
+    log_path : str
+        Path to the log file
+    """
+    # Get current timestamp
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Format the message with timestamp
+    log_message = f"[{timestamp}] {message}\n"
+
+    # Append message to log file
+    try:
+        with open(log_path, 'a') as f:
+            f.write(log_message)
+    except Exception as e:
+        print(f"Warning: Could not write to log file {log_path}: {str(e)}")
+        print(f"Message was: {message}")
+
 
 class RevVAMPTrainer:
     def __init__(self, args):
@@ -614,7 +639,7 @@ def run_training(args):
         state_assignments=state_assignments,
         save_dir=args.save_folder,
         protein_name=args.protein_name,
-        stride=args.state_stride,#args.stride,  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
+        stride=trainer.frames_lag,#args.stride,  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
         # TODO: This needs to be a separate argument than stride
         n_structures=args.n_structures
     )

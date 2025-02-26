@@ -192,7 +192,7 @@ class TrajectoryProcessor:
             dists, inds = self.get_neighbors(coords, self.data['pair_list'][k])
 
             # Create subdirectory name based on parameters
-            ns = int(self.args.stride * timestep)
+            ns = int(self.args.stride * timestep)/1000 # timestep in nanoseconds
             subdir_name = f"{k}_{self.args.num_neighbors}nbrs_{ns}ns"
             output_dir = os.path.join(self.args.interim_dir, subdir_name)
 
