@@ -543,6 +543,13 @@ class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin, nn.Module):
         if isinstance(data[1], np.ndarray):
             batch_t = torch.from_numpy(data[1].astype(self.dtype)).to(device=self.device)
 
+        # TODO: THIS IS NOT WORKING, THERE IS AN ERROR HERE!
+        # If the tensors are already torch tensors but not float32, convert them
+        if isinstance(batch_0, torch.Tensor) and batch_0.dtype != torch.float32:
+            batch_0 = batch_0.float()
+        if isinstance(batch_t, torch.Tensor) and batch_t.dtype != torch.float32:
+            batch_t = batch_t.float()
+
         # Ensure inputs require gradients
         #batch_0, batch_t = batch_data[0].to(self.device), batch_data[1].to(self.device)
         batch_0.requires_grad_(True)

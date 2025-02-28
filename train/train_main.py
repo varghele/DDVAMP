@@ -29,6 +29,11 @@ from utils.traj_utils import infer_timestep
 #torch.manual_seed(hash("by removing stochasticity") % 2**32 - 1)
 #torch.cuda.manual_seed_all(hash("so runs are repeatable") % 2**32 - 1)
 
+import os
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+os.environ['TORCH_USE_CUDA_DSA'] = '1'
+
+
 
 def flush_cuda_cache():
     """Flush CUDA cache and clear memory."""
@@ -152,7 +157,7 @@ class RevVAMPTrainer:
             params = {
                 'protein_name': parts[0],
                 'num_neighbors': int(parts[1].replace('nbrs', '')),
-                'ns': int(parts[2].replace('ns', ''))
+                'ns': float(parts[2].replace('ns', ''))
             }
 
             print(f"Inferred parameters from path:")

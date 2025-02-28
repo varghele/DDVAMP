@@ -34,9 +34,9 @@ def get_hardcoded_args():
         #"--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
         "--topology", "../datasets/ATR/prot.gro",
         "--traj-folder", "../datasets/ATR/",
-        "--num-neighbors", "20",
-        "--stride", "10",
-        "--chunk-size", "5000"
+        "--num-neighbors", "10",
+        "--stride", "100",
+        "--chunk-size", "100"
     ]
 
     # Parse arguments

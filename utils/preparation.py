@@ -7,7 +7,6 @@ from typing import List, Tuple, Union, Dict
 from glob import glob
 import os
 import shutil
-import psutil
 
 
 class TrajectoryProcessor:
@@ -94,64 +93,30 @@ class TrajectoryProcessor:
 
         return residue, pair
 
-    def _infer_timestep(self) -> float:
-        """
-        Infer timestep from first trajectory file.
+    def _infer_timestep(self, traj_files: List[str], pdb_file: str) -> float:
+        """Infer timestep from trajectories by loading multiple frames"""
+        # Try to load first few frames to ensure we can calculate timestep
+        traj_iterator = md.iterload(traj_files[0], top=pdb_file, chunk=2)
+        first_chunk = next(traj_iterator)
 
-        Returns
-        -------
-        float
-            Timestep in picoseconds
-        """
-        try:
-            # Find first trajectory file
-            first_traj_file = None
-            for r_dir in sorted(os.listdir(self.args.traj_folder)):
-                if r_dir.startswith('r'):
-                    r_path = os.path.join(self.args.traj_folder, r_dir)
-                    for f in os.listdir(r_path):
-                        if f.startswith('traj'):
-                            first_traj_file = os.path.join(r_path, f)
-                            break
-                if first_traj_file:
-                    break
+        if len(first_chunk.time) < 2:
+            raise ValueError("Trajectory must have at least 2 frames to infer timestep")
 
-            if not first_traj_file:
-                raise ValueError(f"No trajectory files found in {self.args.traj_folder}")
+        # Calculate timestep from time differences
+        timestep = first_chunk.time[1] - first_chunk.time[0]
 
-            # Load just the first trajectory to check timestep
-            first_traj = md.load(first_traj_file, top=self.args.topology)
-
-            if hasattr(first_traj, 'timestep'):
-                timestep = first_traj.timestep
-            elif hasattr(first_traj, 'time') and len(first_traj.time) > 1:
-                timestep = first_traj.time[1] - first_traj.time[0]
-            else:
-                raise ValueError("Could not infer timestep from trajectory")
-
-            print(f"Inferred timestep: {timestep} ps")
-            return timestep
-
-        except Exception as e:
-            raise ValueError(f"Failed to infer timestep: {str(e)}")
+        print(f"Inferred timestep: {timestep} ps")
+        return timestep
 
     def _load_trajectory(self, traj_files: List[str], pdb_file: str):
-        """Load trajectory files with memory-efficient processing"""
+        """Load trajectory files"""
         valid_trajs = [f for f in traj_files if f.endswith(('.xtc', '.trr', '.dcd', '.nc', '.h5'))]
         if not valid_trajs:
             raise ValueError("No valid trajectory files found")
 
-        # Create featurizer with memory-efficient settings
         feat = pe.coordinates.featurizer(pdb_file)
         feat.add_residue_mindist()
-
-        # Use memory-efficient parameters in source creation
-        return pe.coordinates.source(
-            valid_trajs,
-            feat,
-            stride=self.args.stride,
-            chunksize=1  # Process in smaller chunks
-        )
+        return pe.coordinates.source(valid_trajs, feat, chunksize=self.args.chunk_size)
 
     def get_neighbors(self, coords: Union[List[np.ndarray], np.ndarray], pair_list: List[Tuple[int, int]]) -> Tuple[
         np.ndarray, np.ndarray]:
@@ -160,36 +125,100 @@ class TrajectoryProcessor:
             return self._process_list_trajectories(coords, pair_list)
         return self._process_single_trajectory(coords, pair_list)
 
-    def _process_single_trajectory(self, coords, pair_list):
-        """Memory-efficient single trajectory processing"""
+    def _process_single_trajectory(self, coords: np.ndarray, pair_list: List[Tuple[int, int]]) -> Tuple[
+        np.ndarray, np.ndarray]:
+        """Process a single trajectory"""
+        # Get number of residues from pair_list
+        num_residues = max(max(i, j) for i, j in pair_list)
+
+        # Initialize arrays for all frames in the chunk
+        all_frame_dists = []
+        all_frame_inds = []
+
+        try:
+            # Process each frame in the chunk
+            for frame in coords:  # frame shape will be (49455,)
+                # Create distance matrix with padding for this frame
+                mut_dist = np.ones((num_residues, num_residues)) * 300.0
+
+                # Fill distance matrix using pair list
+                for idx, d in enumerate(frame):
+                    if idx >= len(pair_list):
+                        print(f"Warning: More coordinates than pair list entries")
+                        break
+
+                    res_i, res_j = pair_list[idx]
+                    # Adjust indices to be 0-based
+                    res_i_idx = res_i - 1
+                    res_j_idx = res_j - 1
+
+                    # Verify indices are within bounds
+                    if res_i_idx >= num_residues or res_j_idx >= num_residues:
+                        print(
+                            f"Warning: Index out of bounds - res_i: {res_i}, res_j: {res_j}, num_residues: {num_residues}")
+                        continue
+
+                    mut_dist[res_i_idx, res_j_idx] = d
+                    mut_dist[res_j_idx, res_i_idx] = d  # Symmetric matrix
+
+                # Find nearest neighbors for this frame
+                frame_dists = []
+                frame_inds = []
+
+                for distances in mut_dist:
+                    order = np.argsort(distances)
+                    neighbors = order[:self.args.num_neighbors]
+                    frame_dists.append(distances[neighbors])
+                    frame_inds.append(neighbors)
+
+                all_frame_dists.append(frame_dists)
+                all_frame_inds.append(frame_inds)
+
+            return np.array(all_frame_dists), np.array(all_frame_inds)
+
+        except Exception as e:
+            print(f"Error processing trajectory: {str(e)}")
+            print(f"Coords shape: {coords.shape}")
+            print(f"Number of residues: {num_residues}")
+            print(f"Pair list length: {len(pair_list)}")
+            raise
+
+    def _process_single_trajectory_old(self, coords, pair_list):
+        """Process a single trajectory with correct shape and distance handling"""
         n_frames = len(coords)
         n_residues = self.num_residues
         n_neighbors = self.args.num_neighbors
 
-        # Pre-allocate arrays with float32 for memory efficiency
-        dists = np.zeros((n_frames, n_residues, n_neighbors), dtype=np.float32)
-        inds = np.zeros((n_frames, n_residues, n_neighbors), dtype=np.int32)
+        # Initialize arrays with correct shape
+        dists = []
+        inds = []
 
-        # Process each frame
-        for i in range(n_frames):
-            # Create distance matrix efficiently
-            mut_dist = np.full((n_residues, n_residues), 100.0, dtype=np.float32)
+        for frame in tqdm(coords, desc="Processing frames"):
+            # Initialize distance matrix with large values (like reference)
+            mut_dist = np.ones((n_residues, n_residues)) * 100.0  # Changed from 300.0 to 100.0
 
-            # Fill distance matrix
-            for idx, d in enumerate(coords[i]):
+            # Fill the distance matrix (note the -1 in indices like reference)
+            for idx, d in enumerate(frame):
                 if idx >= len(pair_list):
                     break
                 res_i, res_j = pair_list[idx]
-                mut_dist[res_i - 1, res_j - 1] = d
-                mut_dist[res_j - 1, res_i - 1] = d
+                mut_dist[res_i - 1][res_j - 1] = d  # Added -1 to match reference
+                mut_dist[res_j - 1][res_i - 1] = d  # Added -1 to match reference
 
-            # Find neighbors efficiently
-            for j in range(n_residues):
-                idx = np.argpartition(mut_dist[j], n_neighbors)[:n_neighbors]
-                dists[i, j] = mut_dist[j, idx]
-                inds[i, j] = idx
+            frame_dists = []
+            frame_inds = []
 
-        return dists, inds
+            # Process each residue
+            for dd in mut_dist:
+                states_order = np.argsort(dd)
+                neighbors = states_order[:n_neighbors]
+                frame_dists.append(list(dd[neighbors]))  # Convert to list like reference
+                frame_inds.append(list(neighbors))  # Convert to list like reference
+
+            dists.append(frame_dists)
+            inds.append(frame_inds)
+
+        return np.array(dists), np.array(inds)
 
     def _process_list_trajectories(self, coords_list, pair_list):
         """Process a list of trajectories"""
@@ -201,57 +230,71 @@ class TrajectoryProcessor:
         return np.concatenate(all_dists), np.concatenate(all_inds)
 
     def process_and_save(self):
-        """Process trajectories with memory-efficient streaming"""
+        """Process trajectories and save results"""
         k = self.args.protein_name
 
         try:
             # Get trajectory information
             lengths = [self.data['inpcon'][k].trajectory_lengths()]
             nframes = self.data['inpcon'][k].trajectory_lengths().sum()
-            timestep = self._infer_timestep()
+            print(f"Total frames to process: {nframes}")
 
-            # Create output directory
+            # Infer number of residues from pair_list
+            num_residues = max(max(i, j) for i, j in self.data['pair_list'][k])
+            print(f"Inferred number of residues: {num_residues}")
+
+            # Infer timestep from trajectories
+            timestep = self._infer_timestep(
+                glob(os.path.join(self.args.traj_folder, "r?", "traj*")),
+                os.path.join(self.args.interim_dir, f"{self.args.protein_name}.pdb")
+            )
+
+            # Create subdirectory name and path
             ns = int(self.args.stride * timestep) / 1000
             subdir_name = f"{k}_{self.args.num_neighbors}nbrs_{ns}ns"
             output_dir = os.path.join(self.args.interim_dir, subdir_name)
             os.makedirs(output_dir, exist_ok=True)
 
-            # Process in chunks
-            chunk_size = 1
+            # Save data_info first
+            data_info = {'length': lengths, '_nframes': nframes}
+            np.save(os.path.join(output_dir, "datainfo_min.npy"), data_info)
+
+            # Initialize arrays to store all chunks
             all_dists = []
             all_inds = []
+            current_frame = 0
 
-            # Get data in chunks
-            n_chunks = (nframes + chunk_size - 1) // chunk_size
-            for i in tqdm(range(n_chunks), desc="Processing trajectory chunks"):
-                # Get chunk
-                chunk = self.data['inpcon'][k].get_output(stride=1, chunk=chunk_size)
+            # Create iterator with stride
+            chunk_iterator = self.data['inpcon'][k].iterator(
+                chunk=self.args.chunk_size,
+                stride=self.args.stride,
+                return_trajindex=True
+            )
 
-                # Process chunk
-                chunk_dists, chunk_inds = self.get_neighbors(chunk, self.data['pair_list'][k])
+            with tqdm(total=nframes, desc="Processing trajectories") as pbar:
+                for traj_idx, chunk in chunk_iterator:
+                    chunk_dists, chunk_inds = self.get_neighbors(chunk, self.data['pair_list'][k])
 
-                # Store results
-                all_dists.append(chunk_dists)
-                all_inds.append(chunk_inds)
+                    # Append chunks to lists
+                    all_dists.append(chunk_dists)
+                    all_inds.append(chunk_inds)
 
-                # Clear memory
-                del chunk
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                    # Update progress
+                    chunk_size = chunk_dists.shape[0]
+                    current_frame += chunk_size * self.args.stride
+                    pbar.update(chunk_size * self.args.stride)
 
-            # Combine results
-            dists = np.concatenate(all_dists, axis=0)
-            inds = np.concatenate(all_inds, axis=0)
+                # Verify final count
+                if current_frame != nframes:
+                    print(f"Warning: Processed {current_frame} frames out of expected {nframes}")
 
-            # Save results
-            data_info = {
-                'length': lengths,
-                '_nframes': nframes,
-                'timestep': timestep
-            }
-            np.save(os.path.join(output_dir, "datainfo_min.npy"), data_info)
-            np.save(os.path.join(output_dir, "dist_min.npy"), dists)
-            np.save(os.path.join(output_dir, "inds_min.npy"), inds)
+            # Concatenate all chunks and save
+            final_dists = np.concatenate(all_dists, axis=0)
+            final_inds = np.concatenate(all_inds, axis=0)
+
+            # Save using np.save
+            np.save(os.path.join(output_dir, "dist_min.npy"), final_dists)
+            np.save(os.path.join(output_dir, "inds_min.npy"), final_inds)
 
             print(f"Results saved in: {output_dir}")
             return output_dir
@@ -260,15 +303,89 @@ class TrajectoryProcessor:
             print(f"Error during processing and saving: {str(e)}")
             raise
 
-    def _save_large_array(self, arr, filename):
-        """Save large arrays efficiently"""
-        if arr.nbytes > 1e9:  # If array is larger than 1GB
-            with open(filename, 'wb') as f:
-                np.save(f, arr.shape)
-                for chunk in np.array_split(arr, max(1, arr.shape[0] // 1000)):
-                    np.save(f, chunk)
-        else:
-            np.save(filename, arr)
+    def process_and_save_old(self):
+        """Process trajectories and save results"""
+        k = self.args.protein_name
+
+        try:
+            # Get trajectory information
+            lengths = [self.data['inpcon'][k].trajectory_lengths()]
+            nframes = self.data['inpcon'][k].trajectory_lengths().sum()
+            print(f"Total frames to process: {nframes}")
+
+            # Infer number of residues from pair_list
+            num_residues = max(max(i, j) for i, j in self.data['pair_list'][k])
+            print(f"Inferred number of residues: {num_residues}")
+
+            # Infer timestep from trajectories
+            timestep = self._infer_timestep(
+                glob(os.path.join(self.args.traj_folder, "r?", "traj*")),
+                os.path.join(self.args.interim_dir, f"{self.args.protein_name}.pdb")
+            )
+
+            # Create subdirectory name and path
+            ns = int(self.args.stride * timestep) / 1000
+            subdir_name = f"{k}_{self.args.num_neighbors}nbrs_{ns}ns"
+            output_dir = os.path.join(self.args.interim_dir, subdir_name)
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Save data_info first
+            data_info = {'length': lengths, '_nframes': nframes}
+            np.save(os.path.join(output_dir, "datainfo_min.npy"), data_info)
+
+            # Initialize memory-mapped files
+            dist_mmap = np.memmap(os.path.join(output_dir, "dist_min.npy"),
+                                  dtype=np.float32,
+                                  mode='w+',
+                                  shape=(nframes, num_residues, self.args.num_neighbors))
+            inds_mmap = np.memmap(os.path.join(output_dir, "inds_min.npy"),
+                                  dtype=np.int16,
+                                  mode='w+',
+                                  shape=(nframes, num_residues, self.args.num_neighbors))
+
+            # Process chunks and save incrementally
+            current_frame = 0
+
+            # Create iterator with stride
+            chunk_iterator = self.data['inpcon'][k].iterator(
+                chunk=self.args.chunk_size,
+                stride=self.args.stride,
+                return_trajindex=True
+            )
+
+            with tqdm(total=nframes, desc="Processing trajectories") as pbar:
+                for traj_idx, chunk in chunk_iterator:
+                    chunk_dists, chunk_inds = self.get_neighbors(chunk, self.data['pair_list'][k])
+
+                    # Get chunk size
+                    chunk_size = chunk_dists.shape[0]
+
+                    # Save chunk results to memmap
+                    dist_mmap[current_frame:current_frame + chunk_size] = chunk_dists
+                    inds_mmap[current_frame:current_frame + chunk_size] = chunk_inds
+
+                    # Update frame counter and progress
+                    current_frame += chunk_size * self.args.stride
+                    pbar.update(chunk_size * self.args.stride)
+
+                # Verify final count
+                if current_frame != nframes:
+                    print(f"Warning: Processed {current_frame} frames out of expected {nframes}")
+
+            # Flush changes to disk
+            dist_mmap.flush()
+            inds_mmap.flush()
+
+            # Explicitly close the memmap files
+            del dist_mmap
+            del inds_mmap
+
+            print(f"Results saved in: {output_dir}")
+            return output_dir
+
+        except Exception as e:
+            print(f"Error during processing and saving: {str(e)}")
+            raise
 
 
 def run_pipeline(args) -> Dict:
@@ -291,6 +408,5 @@ def run_pipeline(args) -> Dict:
     # Add output directory to the returned data
     processor.data['output_dir'] = output_dir
     return processor.data
-
 
 

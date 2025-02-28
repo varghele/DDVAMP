@@ -18,7 +18,7 @@ class TestPreparation:
 
         # Define prefixes and directory
         self.reference_prefix = "red_5nbrs_1ns_"  # For reference files (old format)
-        self.generated_dir = "ab42_10nbrs_1ns"    # For generated files (new format)
+        self.generated_dir = "ab42_10nbrs_0.25ns"    # For generated files (new format)
 
         # Define file names
         self.file_names = [
