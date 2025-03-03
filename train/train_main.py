@@ -647,7 +647,7 @@ def run_training(args):
         state_assignments=state_assignments,
         save_dir=args.save_folder,
         protein_name=args.protein_name,
-        stride=trainer.frames_lag,#args.stride,  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
+        stride=trainer.frames_lag*trainer.stride,#args.stride,  # TODO: Adjust this value to maybe get into ns range 100-1000 a good start
         # TODO: This needs to be a separate argument than stride
         n_structures=args.n_structures
     )

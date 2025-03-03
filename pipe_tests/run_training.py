@@ -42,9 +42,9 @@ def get_hardcoded_args():
                                        conflict_handler='resolve')
 
     # Define the protein name and parameters
-    protein_name = "ab42"
+    protein_name = "ATR"
     num_neighbors = 10
-    ns = 1.0  # nanoseconds
+    ns = 10.0  # nanoseconds
 
     # Construct absolute data path using project_root
     data_path = os.path.abspath(os.path.join(
@@ -64,10 +64,10 @@ def get_hardcoded_args():
         "--steps", "training",
         #"--topology", "../forked/RevGraphVAMP/trajectories/red/topol.gro",
         #"--traj-folder", "../forked/RevGraphVAMP/trajectories/red/",
-        "--topology", "../datasets/ab42/trajectories/trajectories/red/topol.gro",
-        "--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
-        #"--topology", "../datasets/ATR/prot.gro",
-        #"--traj-folder", "../datasets/ATR/",
+        #"--topology", "../datasets/ab42/trajectories/trajectories/red/topol.gro",
+        #"--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
+        "--topology", "../datasets/ATR/prot.gro",
+        "--traj-folder", "../datasets/ATR/",
 
         # Model Architecture
         "--num_classes", "8",
@@ -95,8 +95,8 @@ def get_hardcoded_args():
         "--tau", "20",
         "--batch_size", "64",
         "--val_frac", "0.2",
-        "--epochs", "200",
-        "--pre-train-epoch", "200",
+        "--epochs", "5",
+        "--pre-train-epoch", "5",
         #"--seed", "42",
         "--score_method", "VAMPCE",
 
