@@ -23,8 +23,8 @@ def get_hardcoded_args():
     # Set your hardcoded values here
     hardcoded_args = [
         # Pipeline args
-        #"--protein-name", "ab42",
         "--protein-name", "ATR",
+        #"--protein-name", "ATR",
         "--steps", "preparation",
 
         # Preparation args
@@ -36,7 +36,7 @@ def get_hardcoded_args():
         "--traj-folder", "../datasets/ATR/",
         "--num-neighbors", "10",
         "--stride", "100",
-        "--chunk-size", "100"
+        "--chunk-size", "1000"
     ]
 
     # Parse arguments

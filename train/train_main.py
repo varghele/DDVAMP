@@ -20,7 +20,7 @@ import random
 from components.activations.ExpActivation import ExpActivation
 import matplotlib.pyplot as plt
 from utils.vamp_utils import *
-from utils.traj_utils import infer_timestep
+from utils.traj_utils import infer_timestep, infer_num_atoms, infer_num_residues
 
 # Removing stochasticity, setting seed so training is always the same
 #torch.backends.cudnn.deterministic = True
@@ -29,9 +29,9 @@ from utils.traj_utils import infer_timestep
 #torch.manual_seed(hash("by removing stochasticity") % 2**32 - 1)
 #torch.cuda.manual_seed_all(hash("so runs are repeatable") % 2**32 - 1)
 
-import os
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-os.environ['TORCH_USE_CUDA_DSA'] = '1'
+#import os
+#os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+#os.environ['TORCH_USE_CUDA_DSA'] = '1'
 
 
 
@@ -85,6 +85,9 @@ class RevVAMPTrainer:
 
         # Infer parameters from input directory path
         self.inferred_params = self._infer_params_from_path(args.data_path)
+
+        # Infer number of atoms from topology
+        self.args.num_atoms = infer_num_residues(args.topology)
 
         # Infer MD timestep
         try:

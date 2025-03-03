@@ -18,7 +18,7 @@ class TrajectoryProcessor:
         print(f"Using device: {self.device}")
 
     def prepare_topology(self) -> str:
-        """Convert topology to PDB if needed and count residues"""
+        """Convert topology to PDB if needed and re-index residues"""
         # Generate source PDB path
         if self.args.topology.endswith('.pdb'):
             source_pdb = self.args.topology
@@ -33,18 +33,58 @@ class TrajectoryProcessor:
         else:
             raise ValueError("Topology file must be either .pdb or .gro")
 
-        # Copy PDB to interim directory
+        # Load the topology
+        topology = md.load_topology(source_pdb)
+
+        # Create new topology with re-indexed residues
+        new_top = md.Topology()
+
+        # Copy chains and re-index residues
+        new_residue_index = 0
+        for chain in topology.chains:
+            new_chain = new_top.add_chain()
+            for residue in chain.residues:
+                new_residue = new_top.add_residue(
+                    name=residue.name,
+                    chain=new_chain,
+                    resSeq=new_residue_index + 1  # Start from 1
+                )
+                # Copy atoms
+                for atom in residue.atoms:
+                    new_top.add_atom(
+                        name=atom.name,
+                        element=atom.element,
+                        residue=new_residue
+                    )
+                new_residue_index += 1
+
+        # Load coordinates and create new trajectory
+        traj = md.load(source_pdb)
+        new_traj = md.Trajectory(
+            xyz=traj.xyz,
+            topology=new_top,
+            time=traj.time,
+            unitcell_lengths=traj.unitcell_lengths,
+            unitcell_angles=traj.unitcell_angles
+        )
+
+        # Save re-indexed PDB to interim directory
         dest_pdb = os.path.join(self.args.interim_dir, f"{self.args.protein_name}.pdb")
         try:
-            shutil.copy2(source_pdb, dest_pdb)
-            print(f"Copied topology PDB to: {dest_pdb}")
+            new_traj.save_pdb(dest_pdb)
+            print(f"Saved re-indexed topology PDB to: {dest_pdb}")
         except Exception as e:
-            raise RuntimeError(f"Failed to copy PDB to interim directory: {str(e)}")
+            raise RuntimeError(f"Failed to save re-indexed PDB: {str(e)}")
 
-        # Load structure and count residues
-        structure = md.load(dest_pdb)
-        self.num_residues = structure.topology.n_residues
-        print(f"Number of residues detected: {self.num_residues}")
+        # Store number of residues
+        self.num_residues = new_top.n_residues
+        print(f"Number of residues after re-indexing: {self.num_residues}")
+
+        # Print residue mapping for verification
+        print("\nResidue mapping (old → new):")
+        for old_res, new_res in zip(topology.residues, new_top.residues):
+            print(f"Residue {old_res.name} {old_res.resSeq} → {new_res.resSeq}")
+
         return dest_pdb
 
     def load_trajectories(self) -> Dict:

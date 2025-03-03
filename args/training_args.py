@@ -7,7 +7,7 @@ def buildParser():
 
 	# Model Architecture
 	model_group = parser.add_argument_group('Model Architecture')
-	model_group.add_argument('--num_atoms', type=int, default=42, help='Number of atoms in the system')
+	#model_group.add_argument('--num_atoms', type=int, default=318, help='Number of atoms in the system')
 	model_group.add_argument('--num_neighbors', type=int, default=10,
 							 help='Number of neighbors for each atom in the graph')
 	model_group.add_argument('--num_classes', type=int, default=6,

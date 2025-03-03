@@ -3,6 +3,40 @@ import os
 from glob import glob
 
 
+def count_residues_pdb(pdb_file: str) -> int:
+    """
+    Count the number of residues in a PDB file.
+
+    Parameters
+    ----------
+    pdb_file : str
+        Path to PDB file
+
+    Returns
+    -------
+    int
+        Number of residues in the PDB file
+    """
+    # Check if PDB file exists
+    if not os.path.exists(pdb_file):
+        raise FileNotFoundError(f"PDB file not found: {pdb_file}")
+
+    try:
+        # Load PDB topology
+        topology = md.load_topology(pdb_file)
+        n_residues = topology.n_residues
+
+        # Print information
+        print(f"PDB file: {os.path.basename(pdb_file)}")
+        print(f"Number of residues: {n_residues}")
+        print(f"Residue names: {[residue.name for residue in topology.residues]}")
+
+        return n_residues
+
+    except Exception as e:
+        raise ValueError(f"Error reading PDB file: {str(e)}")
+
+
 def analyze_trajectories(traj_folder: str, topology_file: str):
     """
     Load all trajectories in a folder and print their lengths and timestep info.
@@ -14,6 +48,17 @@ def analyze_trajectories(traj_folder: str, topology_file: str):
     topology_file : str
         Path to topology file
     """
+    # First load topology and print number of residues
+    try:
+        top = md.load_topology(topology_file)
+        print(f"\nTopology file: {os.path.basename(topology_file)}")
+        print(f"Number of residues: {top.n_residues}")
+        print(f"Number of atoms: {top.n_atoms}")
+        print("-" * 50)
+    except Exception as e:
+        print(f"Error loading topology file: {str(e)}")
+        return
+
     # Get all trajectory files (assuming common extensions)
     traj_pattern = os.path.join(traj_folder, "**", "*.xtc")  # Adjust pattern as needed
     traj_files = sorted(glob(traj_pattern, recursive=True))
@@ -50,10 +95,13 @@ def analyze_trajectories(traj_folder: str, topology_file: str):
     print(f"\nTotal frames across all trajectories: {total_frames}")
 
 
+
 # Example usage:
 if __name__ == "__main__":
-    traj_folder = "../forked/RevGraphVAMP/trajectories/red/"
-    topology_file = "../forked/RevGraphVAMP/trajectories/red/topol.gro"
-    #traj_folder = "../datasets/ATR/26inactive/26inactive_r5/"
-    #topology_file = "../datasets/ATR/26inactive/26inactive_r5/prot.gro"
+    #traj_folder = "../forked/RevGraphVAMP/trajectories/red/"
+    #topology_file = "../forked/RevGraphVAMP/trajectories/red/topol.gro"
+    traj_folder = "../datasets/ATR/r0/"
+    topology_file = "../datasets/ATR/prot.gro"
+    topology_pdb = "../datasets/ATR/prot.pdb"
+    count_residues_pdb(topology_pdb)
     analyze_trajectories(traj_folder, topology_file)

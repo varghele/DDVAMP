@@ -11,6 +11,7 @@ from components.scores import vamp_score
 from components.computations import covariances_E, _compute_pi, matrix_inverse
 from components.models.VAMPNet import VAMPNetModel
 
+
 class RevVAMPNet(EstimatorTransformer, DLEstimatorMixin, nn.Module):
     r""" Implementation of VAMPNets. :footcite:`mardt2018vampnets`
     These networks try to find an optimal featurization of data based on a VAMP score :footcite:`wu2020variational`
