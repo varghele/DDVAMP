@@ -42,11 +42,13 @@ def parse_args():
             "--steps", "preparation",
 
             # Preparation args
-            "--topology", "datasets/ab42/trajectories/trajectories/red/topol.gro",
-            "--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
+            #"--topology", "datasets/ab42/trajectories/trajectories/red/topol.gro",
+            #"--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
+            "--topology", "datasets/traj_revgraphvamp_org/trajectories/red/topol.gro",
+            "--traj-folder", "datasets/traj_revgraphvamp_org/trajectories/red/",
             "--num-neighbors", "10",
-            "--stride", "40",
-            "--chunk-size", "100"
+            "--stride", "4",
+            "--chunk-size", "1000"
         ]
 
         # Parse hardcoded arguments

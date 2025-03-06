@@ -590,7 +590,7 @@ def calculate_state_attention_maps(attentions: List[np.ndarray],
     state_attention_maps = np.zeros((num_classes, num_atoms, num_atoms))
 
     # Process each state
-    for state in range(1, num_classes + 1):
+    for state in range(num_classes):
         state_masks = [states == state for states in state_assignments]
         state_attentions = []
 

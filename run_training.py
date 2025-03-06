@@ -59,7 +59,7 @@ def parse_args():
         # Define the protein name and parameters
         protein_name = "ab42"
         num_neighbors = 10
-        ns = 10.0  # nanoseconds
+        ns = 1.0  # nanoseconds
 
         # Construct absolute data path using project_root
         data_path = os.path.abspath(os.path.join(
@@ -81,11 +81,11 @@ def parse_args():
             "--traj-folder", "datasets/traj_revgraphvamp_org/trajectories/red/",
 
             # Model Architecture
-            "--num_classes", "5",
+            "--num_classes", "4",
             "--n_conv", "8",
-            "--h_a", "32",
+            "--h_a", "8",
             "--h_g", "16",
-            "--hidden", "32",
+            "--hidden", "16",
             "--dropout", "0.4",
 
             # Distance Parameters
@@ -101,11 +101,11 @@ def parse_args():
             # Training Parameters
             "--learning_rate_a", "0.0005",
             "--learning_rate_b", "0.0001",
-            "--tau", "200",
-            "--batch_size", "64",
+            "--tau", "20",
+            "--batch_size", "500",
             "--val_frac", "0.2",
-            "--epochs", "5",
-            "--pre-train-epoch", "5",
+            "--epochs", "100",
+            "--pre-train-epoch", "100",
             "--score_method", "VAMPCE",
 
             # System Configuration
