@@ -589,7 +589,7 @@ def calculate_state_attention_maps(attentions: List[np.ndarray],
     state_attention_maps = np.zeros((num_classes, num_atoms, num_atoms))
 
     # Process each state
-    for state in range(num_classes):
+    for state in range(1, num_classes + 1):
         state_masks = [states == state for states in state_assignments]
         state_attentions = []
 
@@ -698,7 +698,7 @@ def plot_state_attention_maps(adjs, states_order, n_states, state_populations, s
         ax.set_yticks(x_range)
         ax.set_yticklabels(x_label, fontsize=8)
 
-        ax.set_title(f'State {i + 1}\nPopulation: {state_populations[states_order[i]]:.1%}',
+        ax.set_title(f'State {states_order[i] + 1}\nPopulation: {state_populations[states_order[i]]:.1%}',
                      fontsize=12, pad=10)
 
         plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
@@ -708,7 +708,7 @@ def plot_state_attention_maps(adjs, states_order, n_states, state_populations, s
         cbar.set_label('Attention Weight', fontsize=10)
 
         if save_path:
-            state_save_path = save_path.replace('.png', f'_state_{i + 1}.png')
+            state_save_path = save_path.replace('.png', f'_state_{states_order[i] + 1}.png')
             plt.savefig(state_save_path, bbox_inches='tight')
             print(f"Saved state {i + 1} plot to: {state_save_path}")
         plt.close()
@@ -726,7 +726,7 @@ def plot_state_attention_maps(adjs, states_order, n_states, state_populations, s
         axes = [axes]
 
     for i in range(n_states):
-        ax = axes[i]
+        ax = axes[states_order[i]]
         im = ax.imshow(adjs[states_order[i]], vmin=vmin, vmax=vmax)
 
         ax.hlines(np.arange(0, n_atoms) - 0.5, -0.5, n_atoms - 0.5,
@@ -739,7 +739,7 @@ def plot_state_attention_maps(adjs, states_order, n_states, state_populations, s
         ax.set_yticks(x_range)
         ax.set_yticklabels(x_label, fontsize=8)
 
-        ax.set_title(f'State {i + 1}\nPopulation: {state_populations[states_order[i]]:.1%}',
+        ax.set_title(f'State {states_order[i] + 1}\nPopulation: {state_populations[states_order[i]]:.1%}',
                      fontsize=10, pad=10)
 
         plt.setp(ax.get_xticklabels(), rotation=45, ha='right')

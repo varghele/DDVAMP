@@ -23,20 +23,20 @@ def get_hardcoded_args():
     # Set your hardcoded values here
     hardcoded_args = [
         # Pipeline args
-        "--protein-name", "ATR",
+        "--protein-name", "ab42",
         #"--protein-name", "ATR",
         "--steps", "preparation",
 
         # Preparation args
         #"--topology", "../forked/RevGraphVAMP/trajectories/red/topol.gro",
         #"--traj-folder", "../forked/RevGraphVAMP/trajectories/red/",
-        #"--topology", "../datasets/ab42/trajectories/trajectories/red/topol.gro",
-        #"--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
-        "--topology", "../datasets/ATR/prot.gro",
-        "--traj-folder", "../datasets/ATR/",
+        "--topology", "../datasets/ab42/trajectories/trajectories/red/topol.gro",
+        "--traj-folder", "../datasets/ab42/trajectories/trajectories/red/",
+        #"--topology", "../datasets/ATR/prot.gro",
+        #"--traj-folder", "../datasets/ATR/",
         "--num-neighbors", "10",
-        "--stride", "100",
-        "--chunk-size", "1000"
+        "--stride", "400",
+        "--chunk-size", "100"
     ]
 
     # Parse arguments
