@@ -1,7 +1,6 @@
 import pytest
 import torch
 import torch.nn as nn
-from torch_scatter import scatter_mean
 
 
 def create_test_data(batch_size=32, num_atoms=100, num_neighbors=32):
@@ -57,7 +56,7 @@ def test_graph_vamp_net():
         distances, neighbors, params = create_test_data()
 
         # Import and initialize model
-        from components.models.GraphVAMPNet import GraphVampNet
+        from src.components.models.GraphVAMPNet import GraphVampNet
         model = GraphVampNet(**params)
 
         # Move model to device and ensure all submodules are on device

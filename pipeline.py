@@ -1,11 +1,11 @@
 # pipeline.py
 import os
 from typing import List, Optional, Dict
-from utils import preparation
-from train.train_main import RevVAMPTrainer
-from args.pipeline_args import buildParser as buildPipelineParser
-from args.preparation_args import buildParser as buildPrepParser, validate_args as validate_prep_args
-from args.training_args import buildParser as buildTrainParser
+from src.utils import preparation
+from src.train.train import RevVAMPTrainer
+from src.args.pipeline_args import buildParser as buildPipelineParser
+from src.args import buildParser as buildPrepParser
+from src.args import buildParser as buildTrainParser
 
 
 class Pipeline:

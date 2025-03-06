@@ -1,9 +1,7 @@
 import torch
 import torch.nn as nn
-from components.layers.cfconv import CFConv
+from src.components.layers.cfconv import CFConv
 from forked.RevGraphVAMP.layers import ContinuousFilterConv
-import pytest
-import numpy as np
 
 
 def test_cfconv_implementations():

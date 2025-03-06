@@ -1,7 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
-from components.models.vamps import VAMPS
+from src.components.models.vamps import VAMPS
 
 
 class TestVAMPS:
