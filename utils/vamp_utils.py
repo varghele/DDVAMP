@@ -12,6 +12,7 @@ from matplotlib.image import imread
 import numpy as np
 import pandas as pd
 
+
 def chunks(data, chunk_size=5000):
     '''
     splitting the trajectory into chunks for passing into analysis part
