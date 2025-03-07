@@ -1,8 +1,7 @@
 import torch
 import numpy as np
-import pytest
 from torch import nn
-from components.models.RevVAMPNet import RevVAMPNet
+from src.components.models.RevVAMPNet import RevVAMPNet
 
 
 def test_revvampnet():

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import pytest
-from components.layers.gcn_interaction import GCNInteraction
+from src.components.layers import GCNInteraction
 from forked.RevGraphVAMP.layers import InteractionBlock
 
 

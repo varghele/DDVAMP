@@ -1,7 +1,6 @@
 import torch
-import torch.nn as nn
 import pytest
-from components.layers.gat import PyGGAT
+from src.components.layers.gat import PyGGAT
 from forked.RevGraphVAMP.layers import GATLayer
 
 

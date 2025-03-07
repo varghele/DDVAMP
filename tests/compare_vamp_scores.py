@@ -1,11 +1,10 @@
 import torch
 import numpy as np
 from typing import Tuple
-import pytest
 
-from components.scores.vamp_score import vamp_score as vamp_score_new
+from src.components.scores.vamp_score import vamp_score as vamp_score_new
 from deeptime.decomposition.deep import *
-from deeptime.util.torch import disable_TF32, multi_dot
+from deeptime.util.torch import multi_dot
 
 
 valid_score_methods = ('VAMP1', 'VAMP2', 'VAMPE', 'VAMPCE')

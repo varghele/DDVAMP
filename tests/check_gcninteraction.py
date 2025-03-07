@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-import numpy as np
-from components.layers.gcn_interaction import GCNInteraction
+from src.components.layers import GCNInteraction
 
 
 def test_gcn_interaction():

@@ -1,7 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
-from components.models.vampu import VAMPU
+from src.components.models.vampu import VAMPU
 
 
 class TestVAMPU:

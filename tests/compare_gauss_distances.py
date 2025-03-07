@@ -1,8 +1,7 @@
 import torch
 import pytest
-import numpy as np
 from typing import Tuple
-from components.distances.gaussian import GaussianDistance
+from src.components.distances.gaussian import GaussianDistance
 from forked.RevGraphVAMP.layers import GaussianDistance as OriginalGaussianDistance
 
 
