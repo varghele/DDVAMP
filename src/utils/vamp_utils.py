@@ -898,7 +898,8 @@ def generate_state_structures(traj_folder: str,
         current_idx += strided_count
 
     # Flatten state assignments
-    all_states = np.concatenate(strided_assignments)
+    #all_states = np.concatenate(strided_assignments)
+    all_states = state_assignments[0] #TODO: check if this is right
     unique_states = np.unique(all_states)
     state_structures = {}
 
@@ -1207,6 +1208,194 @@ def visualize_attention_ensemble(state_structures: Dict[int, List[str]],
 
 
 def plot_state_network(probs: List[np.ndarray],
+                       state_structures: Dict[int, List[str]],
+                       save_dir: str,
+                       protein_name: str,
+                       lag_time: int = 1):
+    """
+    Create a network plot showing transitions between non-empty states with representative structures.
+
+    Parameters
+    ----------
+    probs : List[np.ndarray]
+        List of state probability trajectories
+    state_structures : Dict[int, List[str]]
+        Dictionary mapping state numbers to lists of PDB file paths
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein
+    lag_time : int
+        Lag time for transition matrix calculation
+    """
+    # Calculate matrices and populations
+    trans_matrix, trans_matrix_no_self = calculate_transition_matrices(probs, lag_time)
+
+    state_pops = []
+    for prob_traj in probs:
+        states = np.argmax(prob_traj, axis=1)
+        unique, counts = np.unique(states, return_counts=True)
+        pop = np.zeros(prob_traj.shape[1])
+        pop[unique] = counts
+        state_pops.append(pop / len(states))
+    avg_state_pops = np.mean(state_pops, axis=0)
+
+    # Identify non-empty states (those with structures or populations)
+    non_empty_states = set()
+    for i, pop in enumerate(avg_state_pops):
+        if pop > 0 and i in state_structures and len(state_structures[i]) > 0:
+            non_empty_states.add(i)
+
+    # If all states are empty, warn and return
+    if not non_empty_states:
+        print("Warning: No non-empty states found. Cannot create network plot.")
+        return
+
+    # Create mapping from old state indices to new contiguous indices
+    non_empty_states = sorted(list(non_empty_states))
+    old_to_new_idx = {old_idx: new_idx for new_idx, old_idx in enumerate(non_empty_states)}
+
+    # Create reduced transition matrix with only non-empty states
+    n_active_states = len(non_empty_states)
+    reduced_trans_matrix = np.zeros((n_active_states, n_active_states))
+    reduced_trans_matrix_no_self = np.zeros((n_active_states, n_active_states))
+    reduced_pops = np.zeros(n_active_states)
+
+    # Fill reduced matrices and populations
+    for i, old_i in enumerate(non_empty_states):
+        reduced_pops[i] = avg_state_pops[old_i]
+        for j, old_j in enumerate(non_empty_states):
+            reduced_trans_matrix[i, j] = trans_matrix[old_i, old_j]
+            reduced_trans_matrix_no_self[i, j] = trans_matrix_no_self[old_i, old_j]
+
+    # Normalize reduced transition matrix if needed
+    row_sums = reduced_trans_matrix.sum(axis=1)
+    mask = row_sums > 0
+    reduced_trans_matrix[mask] = reduced_trans_matrix[mask] / row_sums[mask, np.newaxis]
+
+    row_sums_no_self = reduced_trans_matrix_no_self.sum(axis=1)
+    mask_no_self = row_sums_no_self > 0
+    reduced_trans_matrix_no_self[mask_no_self] = reduced_trans_matrix_no_self[mask_no_self] / row_sums_no_self[
+        mask_no_self, np.newaxis]
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(24, 24))
+
+    # Setup node positions with larger radius
+    angles = np.linspace(0, 2 * np.pi, n_active_states, endpoint=False)
+    radius = 2.0  # Increased radius
+    pos = {i: (radius * np.cos(angle), radius * np.sin(angle))
+           for i, angle in enumerate(angles)}
+
+    # Draw transitions with separate curves for forward/backward
+    transition_labels = {}
+    for i in range(n_active_states):
+        for j in range(n_active_states):
+            if i != j and reduced_trans_matrix_no_self[i, j] > 0:
+                # Forward transitions (blue, outer curve)
+                if i < j:
+                    color = 'blue'
+                    rad = -0.3
+                # Backward transitions (red, inner curve)
+                else:
+                    color = 'red'
+                    rad = -0.3
+
+                # Draw thicker arrows based on probability
+                arrow = ax.annotate("",
+                                    xy=pos[j], xycoords='data',
+                                    xytext=pos[i], textcoords='data',
+                                    arrowprops=dict(arrowstyle="-|>",
+                                                    connectionstyle=f"arc3,rad={rad}",
+                                                    color=color,
+                                                    lw=4 * reduced_trans_matrix_no_self[i, j] + 2,  # Thicker arrows
+                                                    alpha=0.7,
+                                                    mutation_scale=20))  # Controls arrowhead size
+
+                # Store transition information
+                state_pair = tuple(sorted([i, j]))
+                if state_pair not in transition_labels:
+                    transition_labels[state_pair] = []
+
+                # Use original state numbers for labels
+                orig_i = non_empty_states[i]
+                orig_j = non_empty_states[j]
+                transition_labels[state_pair].append({
+                    'text': f'S{orig_i + 1}→S{orig_j + 1}: {reduced_trans_matrix_no_self[i, j]:.2f}',
+                    'color': color
+                })
+
+    # Add labels for all transitions
+    for (i, j), labels in transition_labels.items():
+        # Calculate middle point
+        mid_x = (pos[i][0] + pos[j][0]) / 2
+        mid_y = (pos[i][1] + pos[j][1]) / 2
+
+        # Calculate perpendicular offset
+        dx = pos[j][0] - pos[i][0]
+        dy = pos[j][1] - pos[i][1]
+        angle = np.arctan2(dy, dx)
+        perp_angle = angle + np.pi / 2
+
+        offset = 0.2
+        offset_x = offset * np.cos(perp_angle)
+        offset_y = offset * np.sin(perp_angle)
+
+        # Stack labels vertically
+        for idx, label in enumerate(labels):
+            vertical_spacing = 0.15  # Adjust this value to control vertical spacing
+            y_offset = vertical_spacing * (idx - (len(labels) - 1) / 2)
+
+            ax.text(mid_x + offset_x,
+                    mid_y + offset_y + y_offset,
+                    label['text'],
+                    ha='center', va='center',
+                    color=label['color'],
+                    bbox=dict(facecolor='white', alpha=0.7),
+                    fontsize=12)
+
+    # Draw nodes and add structure images
+    for i in range(n_active_states):
+        orig_i = non_empty_states[i]
+
+        # Load and display structure image
+        img_path = os.path.join(save_dir, f"state_{orig_i + 1}/images/{protein_name}_state_{orig_i + 1}_iso.png")
+        if os.path.exists(img_path):
+            img = imread(img_path)
+            img_size = 0.8  # Increased image size
+            ax.imshow(img,
+                      extent=[pos[i][0] - img_size / 2, pos[i][0] + img_size / 2,
+                              pos[i][1] - img_size / 2, pos[i][1] + img_size / 2])
+
+        # Add state label and population with larger font
+        ax.text(pos[i][0], pos[i][1] - 0.5,
+                f'State {orig_i + 1}\n{reduced_pops[i]:.1%}',
+                ha='center', va='center',
+                bbox=dict(facecolor='white', alpha=0.7),
+                fontsize=14)
+
+    # Add legend with larger font
+    ax.plot([], [], color='blue', label='Forward transitions', linewidth=4)
+    ax.plot([], [], color='red', label='Backward transitions', linewidth=4)
+    ax.legend(loc='upper right', fontsize=12)
+
+    # Increase plot bounds
+    ax.set_xlim(-2.8, 2.8)
+    ax.set_ylim(-2.8, 2.8)
+    plt.axis('equal')
+    plt.axis('off')
+    plt.title(f'State Transition Network - {protein_name} (Non-empty States Only)', fontsize=16)
+
+    # Save plot
+    plot_path = os.path.join(save_dir, f"{protein_name}_state_network.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    print(f"Saved state network plot to: {plot_path} with {n_active_states} non-empty states.")
+    print(f"Original states included: {', '.join([f'S{s + 1}' for s in non_empty_states])}")
+
+
+def plot_state_network_old(probs: List[np.ndarray],
                       state_structures: Dict[int, List[str]],
                       save_dir: str,
                       protein_name: str,

@@ -19,7 +19,7 @@ def buildParser():
     proc_group = parser.add_argument_group('Processing Parameters')
     proc_group.add_argument('--num-neighbors', type=int, default=5,
                            help='Number of neighbors for trajectory processing')
-    proc_group.add_argument('--stride', type=int, default=5,
+    proc_group.add_argument('--stride', type=int, default=40,
                            help='Stride for trajectory processing')
     proc_group.add_argument('--chunk-size', type=int, default=5000,
                            help='Chunk size for processing')
