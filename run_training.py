@@ -77,8 +77,10 @@ def parse_args():
             # Pipeline args
             "--protein-name", protein_name,
             "--steps", "training",
-            "--topology", "datasets/traj_revgraphvamp_org/trajectories/red/topol.gro",
-            "--traj-folder", "datasets/traj_revgraphvamp_org/trajectories/red/",
+            #"--topology", "datasets/traj_revgraphvamp_org/trajectories/red/topol.gro",
+            #"--traj-folder", "datasets/traj_revgraphvamp_org/trajectories/red/",
+            "--topology", "datasets/ab42/trajectories/trajectories/red/topol.gro",
+            "--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
 
             # Model Architecture
             "--num_classes", "4",
@@ -104,8 +106,8 @@ def parse_args():
             "--tau", "20",
             "--batch_size", "500",
             "--val_frac", "0.2",
-            "--epochs", "100",
-            "--pre-train-epoch", "100",
+            "--epochs", "5",
+            "--pre-train-epoch", "5",
             "--score_method", "VAMPCE",
 
             # System Configuration
@@ -118,6 +120,24 @@ def parse_args():
         # Parse hardcoded arguments
         args = parser.parse_args(hardcoded_args)
         args.using_hardcoded = True
+
+    # Construct the data path dynamically based on parsed arguments
+    protein_name = args.protein_name
+    num_neighbors = getattr(args, "num_neighbors", 10)  # Default to 10 if not provided
+    ns = getattr(args, "ns", 1.0)  # Default to 1.0 if not provided
+
+    # Construct absolute data path using project_root
+    data_path = os.path.abspath(os.path.join(
+        project_root,
+        "data",
+        protein_name,
+        "interim",
+        f"{protein_name}_{num_neighbors}nbrs_{ns}ns"
+    ))
+
+    # Add the constructed data path to args
+    args.data_path = data_path
+    print(f"\nFinal constructed data path: {args.data_path}")
 
     return args
 
