@@ -38,7 +38,7 @@ def parse_args():
         # Set your hardcoded values here
         hardcoded_args = [
             # Pipeline args
-            "--protein-name", "ab42",
+            "--protein-name", "TRP",
             "--steps", "preparation",
 
             # Preparation args
@@ -46,10 +46,12 @@ def parse_args():
             #"--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
             #"--topology", "datasets/traj_revgraphvamp_org/trajectories/red/topol.gro",
             #"--traj-folder", "datasets/traj_revgraphvamp_org/trajectories/red/",
-            "--topology", "datasets/ab42/trajectories/trajectories/red/topol.gro",
-            "--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
-            "--num-neighbors", "10",
-            "--stride", "4",
+            #"--topology", "datasets/ab42/trajectories/trajectories/red/topol.gro",
+            #"--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
+            "--traj-folder", "datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/",
+            "--topology", "datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.mae",
+            "--num-neighbors", "7",
+            "--stride", "100",
             "--chunk-size", "1000"
         ]
 

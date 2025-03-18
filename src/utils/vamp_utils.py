@@ -868,12 +868,21 @@ def generate_state_structures(traj_folder: str,
         Dictionary mapping state numbers to lists of PDB file paths,
         sorted by similarity to average structure
     """
-    # Get trajectory files
-    traj_pattern = os.path.join(traj_folder, "r?", "traj*")
-    traj_files = sorted(glob(traj_pattern))
+    # Get trajectory files based on available files
+    dcd_pattern = os.path.join(traj_folder, "*.dcd")
+    traditional_pattern = os.path.join(traj_folder, "r?", "traj*")
 
-    if not traj_files:
-        raise ValueError(f"No trajectory files found in {traj_folder}")
+    # Check for .dcd files first
+    dcd_files = sorted(glob(dcd_pattern))
+    if dcd_files:
+        traj_files = dcd_files
+        print(f"Found {len(dcd_files)} .dcd trajectory files")
+    else:
+        # If no .dcd files found, try traditional structure
+        traj_files = sorted(glob(traditional_pattern))
+        if not traj_files:
+            raise ValueError(f"No trajectory files found in {traj_folder} "
+                             f"(tried patterns: {dcd_pattern} and {traditional_pattern})")
 
     # Load trajectories with stride
     trajs = []

@@ -20,12 +20,18 @@ def infer_timestep(traj_folder: str, topology: str) -> float:
     float
         Timestep in picoseconds
     """
-    # Find first trajectory file
-    traj_pattern = os.path.join(traj_folder, "r?", "traj*")
+    # Determine trajectory pattern based on topology type
+    if topology.endswith('.mae') or topology.endswith('.pdb') and not glob(os.path.join(traj_folder, "r?", "traj*")):
+        # For .mae files or when trajectories are directly in the folder
+        traj_pattern = os.path.join(traj_folder, "*.dcd")
+    else:
+        # Traditional structure with r1, r2, etc. folders
+        traj_pattern = os.path.join(traj_folder, "r?", "traj*")
+
     traj_files = sorted(glob(traj_pattern))
 
     if not traj_files:
-        raise ValueError(f"No trajectory files found in {traj_folder}")
+        raise ValueError(f"No trajectory files found matching pattern: {traj_pattern}")
 
     # Load first trajectory to check timestep
     first_traj = md.load(traj_files[0], top=topology)
@@ -39,6 +45,7 @@ def infer_timestep(traj_folder: str, topology: str) -> float:
 
     print(f"Inferred timestep: {timestep} ps")
     return timestep
+
 
 def infer_num_atoms(topology: str) -> int:
     """

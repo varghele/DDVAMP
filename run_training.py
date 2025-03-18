@@ -57,9 +57,10 @@ def parse_args():
         print("No command line arguments provided. Using hardcoded defaults.")
 
         # Define the protein name and parameters
-        protein_name = "ab42"
+        protein_name = "ATR"
         num_neighbors = 10
-        ns = 1.0  # nanoseconds
+        ns = 1  # nanoseconds
+
 
         # Construct absolute data path using project_root
         data_path = os.path.abspath(os.path.join(
@@ -79,12 +80,14 @@ def parse_args():
             "--steps", "training",
             #"--topology", "datasets/traj_revgraphvamp_org/trajectories/red/topol.gro",
             #"--traj-folder", "datasets/traj_revgraphvamp_org/trajectories/red/",
-            "--topology", "datasets/ab42/trajectories/trajectories/red/topol.gro",
-            "--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
+            #"--topology", "datasets/ab42/trajectories/trajectories/red/topol.gro",
+            #"--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
+            "--traj-folder", "datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/",
+            "--topology", "datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb",
 
             # Model Architecture
             "--num_classes", "4",
-            "--n_conv", "8",
+            "--n_conv", "4",
             "--h_a", "8",
             "--h_g", "16",
             "--hidden", "16",
@@ -104,10 +107,10 @@ def parse_args():
             "--learning_rate_a", "0.0005",
             "--learning_rate_b", "0.0001",
             "--tau", "20",
-            "--batch_size", "500",
+            "--batch_size", "1000",
             "--val_frac", "0.2",
-            "--epochs", "5",
-            "--pre-train-epoch", "5",
+            "--epochs", "100",
+            "--pre-train-epoch", "100",
             "--score_method", "VAMPCE",
 
             # System Configuration
@@ -120,6 +123,10 @@ def parse_args():
         # Parse hardcoded arguments
         args = parser.parse_args(hardcoded_args)
         args.using_hardcoded = True
+
+        args.protein_name = protein_name
+        args.ns = ns
+        args.num_neighbors = num_neighbors
 
     # Construct the data path dynamically based on parsed arguments
     protein_name = args.protein_name

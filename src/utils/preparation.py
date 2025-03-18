@@ -30,6 +30,106 @@ class TrajectoryProcessor:
                     traj.save_pdb(source_pdb)
                 except Exception as e:
                     raise RuntimeError(f"Failed to convert GRO to PDB: {str(e)}")
+        elif self.args.topology.endswith('.mae'):
+            source_pdb = self.args.topology.replace('.mae', '.pdb')
+            if not os.path.exists(source_pdb):
+                try:
+                    print(f"Converting .mae topology to .pdb using PyMOL")
+                    import pymol
+
+                    # Initialize PyMOL without GUI
+                    pymol.pymol_argv = ['pymol', '-cq']
+                    pymol.finish_launching()
+
+                    # Load the .mae file and save as PDB
+                    pymol.cmd.load(self.args.topology)
+                    pymol.cmd.save(source_pdb)
+                    pymol.cmd.quit()
+
+                    if not os.path.exists(source_pdb) or os.path.getsize(source_pdb) < 100:
+                        raise RuntimeError("PyMOL conversion failed to create a valid PDB file")
+
+                    print(f"Successfully converted {self.args.topology} to {source_pdb} using PyMOL")
+
+                except Exception as e:
+                    raise RuntimeError(f"Failed to convert MAE to PDB using PyMOL: {str(e)}")
+        else:
+            raise ValueError("Topology file must be either .pdb, .gro, or .mae")
+
+        # Check if the PDB file was successfully created
+        if not os.path.exists(source_pdb):
+            raise FileNotFoundError(f"Failed to create or find PDB file: {source_pdb}")
+
+        # Load the topology
+        try:
+            topology = md.load_topology(source_pdb)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load topology from {source_pdb}: {str(e)}")
+
+        # Create new topology with re-indexed residues
+        new_top = md.Topology()
+
+        # Copy chains and re-index residues
+        new_residue_index = 0
+        for chain in topology.chains:
+            new_chain = new_top.add_chain()
+            for residue in chain.residues:
+                new_residue = new_top.add_residue(
+                    name=residue.name,
+                    chain=new_chain,
+                    resSeq=new_residue_index + 1  # Start from 1
+                )
+                # Copy atoms
+                for atom in residue.atoms:
+                    new_top.add_atom(
+                        name=atom.name,
+                        element=atom.element,
+                        residue=new_residue
+                    )
+                new_residue_index += 1
+
+        # Load coordinates and create new trajectory
+        traj = md.load(source_pdb)
+        new_traj = md.Trajectory(
+            xyz=traj.xyz,
+            topology=new_top,
+            time=traj.time,
+            unitcell_lengths=traj.unitcell_lengths,
+            unitcell_angles=traj.unitcell_angles
+        )
+
+        # Save re-indexed PDB to interim directory
+        dest_pdb = os.path.join(self.args.interim_dir, f"{self.args.protein_name}.pdb")
+        try:
+            new_traj.save_pdb(dest_pdb)
+            print(f"Saved re-indexed topology PDB to: {dest_pdb}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to save re-indexed PDB: {str(e)}")
+
+        # Store number of residues
+        self.num_residues = new_top.n_residues
+        print(f"Number of residues after re-indexing: {self.num_residues}")
+
+        # Print residue mapping for verification
+        print("\nResidue mapping (old → new):")
+        for old_res, new_res in zip(topology.residues, new_top.residues):
+            print(f"Residue {old_res.name} {old_res.resSeq} → {new_res.resSeq}")
+
+        return dest_pdb
+
+    def prepare_topology_old(self) -> str:
+        """Convert topology to PDB if needed and re-index residues"""
+        # Generate source PDB path
+        if self.args.topology.endswith('.pdb'):
+            source_pdb = self.args.topology
+        elif self.args.topology.endswith('.gro'):
+            source_pdb = self.args.topology.replace('.gro', '.pdb')
+            if not os.path.exists(source_pdb):
+                try:
+                    traj = md.load(self.args.topology)
+                    traj.save_pdb(source_pdb)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to convert GRO to PDB: {str(e)}")
         else:
             raise ValueError("Topology file must be either .pdb or .gro")
 
@@ -95,11 +195,20 @@ class TrajectoryProcessor:
         if not os.path.exists(self.args.traj_folder):
             raise ValueError(f"Trajectory folder not found: {self.args.traj_folder}")
 
-        traj_pattern = os.path.join(self.args.traj_folder, "r?", "traj*")
+        # Handle both traditional (r1, r2, etc.) and direct .dcd file structures
+        if self.args.topology.endswith('.mae'):
+            # For .mae files, look for .dcd files directly in the folder
+            traj_pattern = os.path.join(self.args.traj_folder, "*.dcd")
+        else:
+            # Traditional structure with r1, r2, etc. folders
+            traj_pattern = os.path.join(self.args.traj_folder, "r?", "traj*")
+
         traj_files = sorted(glob(traj_pattern))
 
         if not traj_files:
             raise ValueError(f"No trajectory files found matching pattern: {traj_pattern}")
+
+        print(f"Found trajectory files: {traj_files}")  # Debug print
 
         k = self.args.protein_name
         residue, pair = self._process_single_simulation(k, pdb_file, traj_files)
@@ -283,9 +392,14 @@ class TrajectoryProcessor:
             num_residues = max(max(i, j) for i, j in self.data['pair_list'][k])
             print(f"Inferred number of residues: {num_residues}")
 
-            # Infer timestep from trajectories
+            # Infer timestep from trajectories - modify pattern based on topology type
+            if self.args.topology.endswith('.mae'):
+                traj_pattern = os.path.join(self.args.traj_folder, "*.dcd")
+            else:
+                traj_pattern = os.path.join(self.args.traj_folder, "r?", "traj*")
+
             timestep = self._infer_timestep(
-                glob(os.path.join(self.args.traj_folder, "r?", "traj*")),
+                glob(traj_pattern),
                 os.path.join(self.args.interim_dir, f"{self.args.protein_name}.pdb")
             )
 
