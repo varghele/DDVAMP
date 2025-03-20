@@ -57,9 +57,9 @@ def parse_args():
         print("No command line arguments provided. Using hardcoded defaults.")
 
         # Define the protein name and parameters
-        protein_name = "ab42"
-        num_neighbors = 10
-        ns = 0.25  # nanoseconds
+        protein_name = "TRP"
+        num_neighbors = 7
+        ns = 0.01  # nanoseconds
 
 
         # Construct absolute data path using project_root
@@ -80,24 +80,24 @@ def parse_args():
             "--steps", "training",
             #"--topology", "datasets/traj_revgraphvamp_org/trajectories/red/topol.gro",
             #"--traj-folder", "datasets/traj_revgraphvamp_org/trajectories/red/",
-            "--topology", "datasets/ab42/trajectories/trajectories/red/topol.gro",
-            "--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
-            #"--traj-folder", "datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/",
-            #"--topology", "datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb",
+            #"--topology", "datasets/ab42/trajectories/trajectories/red/topol.gro",
+            #"--traj-folder", "datasets/ab42/trajectories/trajectories/red/",
+            "--traj-folder", "datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/",
+            "--topology", "datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb",
 
             # Model Architecture
-            "--num_classes", "4",
+            "--num_classes", "5",
             "--n_conv", "4",
-            "--h_a", "8",
-            #"--h_b", "16", #num gaussians #TODO: implement!
+            "--h_a", "16",
+            #"--h_b", "16", #num gaussians #TODO: check implementation, currently it is defined via the step I think
             "--h_g", "16",
             "--hidden", "16",
-            "--dropout", "0.4",
+            "--dropout", "0.04",
 
             # Distance Parameters
-            "--dmin", "0.0",
-            "--dmax", "5.0",
-            "--step", "0.2",
+            "--dmin", "2.0",
+            "--dmax", "8.0",
+            "--step", "0.5",
 
             # Model Configuration
             "--conv_type", "SchNet",
@@ -105,10 +105,10 @@ def parse_args():
             "--atom_init", "normal",
 
             # Training Parameters
-            "--learning_rate_a", "0.0005",
-            "--learning_rate_b", "0.0001",
-            "--tau", "10",
-            "--batch_size", "500",
+            "--learning_rate_a", "0.005",
+            "--learning_rate_b", "0.0005",
+            "--tau", "20",
+            "--batch_size", "1000",
             "--val_frac", "0.2",
             "--epochs", "100",
             "--pre-train-epoch", "100",

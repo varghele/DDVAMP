@@ -100,8 +100,12 @@ def analyze_trajectories(traj_folder: str, topology_file: str):
 if __name__ == "__main__":
     #traj_folder = "../forked/RevGraphVAMP/trajectories/red/"
     #topology_file = "../forked/RevGraphVAMP/trajectories/red/topol.gro"
-    traj_folder = "../datasets/traj_revgraphvamp_org/trajectories/red/r1/"
-    topology_file = "../datasets/traj_revgraphvamp_org/trajectories/red/topol.gro"
-    topology_pdb = "../datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb"
+    #traj_folder = "../datasets/traj_revgraphvamp_org/trajectories/red/r1/"
+    #topology_file = "../datasets/traj_revgraphvamp_org/trajectories/red/topol.gro"
+    #topology_pdb = "../datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb"
+    traj_folder = "../datasets/ATR/"
+    topology_file = "../datasets/ATR/prot.gro"
+    topology_pdb = "../datasets/ATR/prot.pdb"
+
     count_residues_pdb(topology_pdb)
     analyze_trajectories(traj_folder, topology_file)

@@ -195,18 +195,23 @@ class TrajectoryProcessor:
         if not os.path.exists(self.args.traj_folder):
             raise ValueError(f"Trajectory folder not found: {self.args.traj_folder}")
 
-        # Handle both traditional (r1, r2, etc.) and direct .dcd file structures
-        if self.args.topology.endswith('.mae'):
-            # For .mae files, look for .dcd files directly in the folder
-            traj_pattern = os.path.join(self.args.traj_folder, "*.dcd")
-        else:
-            # Traditional structure with r1, r2, etc. folders
-            traj_pattern = os.path.join(self.args.traj_folder, "r?", "traj*")
+        # Try different trajectory patterns in order
+        patterns = [
+            os.path.join(self.args.traj_folder, "*.dcd"),
+            os.path.join(self.args.traj_folder, "*.xtc"),
+            os.path.join(self.args.traj_folder, "r?", "traj*")
+        ]
 
-        traj_files = sorted(glob(traj_pattern))
+        traj_files = []
+        for pattern in patterns:
+            traj_files = sorted(glob(pattern))
+            if traj_files:
+                print(f"Found trajectory files using pattern {pattern}")
+                break
 
         if not traj_files:
-            raise ValueError(f"No trajectory files found matching pattern: {traj_pattern}")
+            raise ValueError(f"No trajectory files found in {self.args.traj_folder} "
+                             f"(tried patterns: {', '.join(patterns)})")
 
         print(f"Found trajectory files: {traj_files}")  # Debug print
 
@@ -226,7 +231,7 @@ class TrajectoryProcessor:
         residue = {}
         pair = []
         feat = pe.coordinates.featurizer(pdb_file)
-        feat.add_residue_mindist()
+        feat.add_residue_mindist(ignore_nonprotein=False)
 
         for key in feat.describe():
             name = key.split(' ')

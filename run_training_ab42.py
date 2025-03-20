@@ -59,7 +59,7 @@ def parse_args():
         # Define the protein name and parameters
         protein_name = "ab42"
         num_neighbors = 10
-        ns = 0.25  # nanoseconds
+        ns = 1.0  # nanoseconds
 
 
         # Construct absolute data path using project_root
@@ -96,8 +96,8 @@ def parse_args():
 
             # Distance Parameters
             "--dmin", "0.0",
-            "--dmax", "5.0",
-            "--step", "0.2",
+            "--dmax", "8.0",
+            "--step", "0.5",
 
             # Model Configuration
             "--conv_type", "SchNet",
